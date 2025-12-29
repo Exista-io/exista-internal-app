@@ -1,65 +1,298 @@
-import Image from "next/image";
+'use client'
 
-export default function Home() {
+import { useEffect, useState } from 'react'
+import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
+import { supabase } from '@/lib/supabase'
+import { Client, Audit } from '@/types/database'
+import { Users, Activity, CalendarDays, TrendingUp, TrendingDown, Minus } from 'lucide-react'
+import {
+  BarChart,
+  Bar,
+  XAxis,
+  YAxis,
+  Tooltip,
+  ResponsiveContainer,
+  Cell
+} from 'recharts'
+import { Link } from 'lucide-react'
+import { useRouter } from 'next/navigation'
+import { Loader2 } from 'lucide-react'
+import { Badge } from '@/components/ui/badge'
+import { Separator } from '@/components/ui/separator'
+
+// Helper Types
+type ClientWithLatestAudit = Client & {
+  latestAudit?: Audit;
+  previousAudit?: Audit;
+  status: 'Elite' | 'Verde' | 'Ambar' | 'Rojo' | 'Sin Auditoría';
+};
+
+export default function DashboardPage() {
+  const router = useRouter()
+  const [loading, setLoading] = useState(true)
+  const [stats, setStats] = useState({
+    totalClients: 0,
+    avgEvs: 0,
+    auditsThisMonth: 0,
+  })
+  const [auditList, setAuditList] = useState<(Audit & { client_name: string })[]>([])
+  const [distribution, setDistribution] = useState<{ name: string; value: number; color: string }[]>([])
+  const [clientsWithEvolution, setClientsWithEvolution] = useState<ClientWithLatestAudit[]>([])
+
+  useEffect(() => {
+    fetchDashboardData()
+  }, [])
+
+  const fetchDashboardData = async () => {
+    setLoading(true)
+    try {
+      // 1. Fetch Clients
+      const { data: clientsData, error: clientsError } = await supabase.from('clients').select('*')
+      if (clientsError) throw clientsError;
+
+      // 2. Fetch All Audits
+      const { data: auditsData, error: auditsError } = await supabase.from('audits').select('*').order('fecha', { ascending: false })
+      if (auditsError) throw auditsError;
+
+      // Explicit casting if needed, though with types it should work. 
+      // If it failed, let's cast to ensure safety.
+      const clients: Client[] = (clientsData as any) || []
+      const audits: Audit[] = (auditsData as any) || []
+
+      if (!clients || !audits) return
+
+      // --- Process Logic ---
+
+      // A. Recent Audits List (Top 5)
+      // Need to map client_id to name
+      const clientMap = new Map<string, string>();
+      clients.forEach(c => clientMap.set(c.id, c.nombre))
+
+      const recentAudits = audits.slice(0, 5).map(a => ({
+        ...a,
+        client_name: clientMap.get(a.client_id) || 'Desconocido'
+      }))
+      setAuditList(recentAudits)
+
+
+      // B. Client Status & Evolution
+      const distributionCounts = { Elite: 0, Verde: 0, Ambar: 0, Rojo: 0, 'Sin Auditoría': 0 }
+      let totalEvsSum = 0;
+      let totalEvsCount = 0;
+      let auditsThisMonthCount = 0;
+      const now = new Date();
+      const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+
+      const processedClients: ClientWithLatestAudit[] = clients.map(client => {
+        const clientAudits = audits.filter(a => a.client_id === client.id).sort((a, b) => new Date(b.fecha).getTime() - new Date(a.fecha).getTime());
+        const latest = clientAudits[0];
+        const previous = clientAudits[1];
+
+        let status: ClientWithLatestAudit['status'] = 'Sin Auditoría';
+
+        if (latest) {
+          const score = latest.score_total || 0;
+          totalEvsSum += score;
+          totalEvsCount++;
+
+          // Count audits this month
+          const auditDate = new Date(latest.fecha);
+          if (auditDate >= startOfMonth) {
+            auditsThisMonthCount++;
+          }
+
+          // Categorize
+          if (score >= 90) status = 'Elite';
+          else if (score >= 70) status = 'Verde';
+          else if (score >= 50) status = 'Ambar';
+          else status = 'Rojo';
+        }
+
+        distributionCounts[status]++;
+
+        return {
+          ...client,
+          latestAudit: latest,
+          previousAudit: previous,
+          status
+        }
+      });
+
+      setClientsWithEvolution(processedClients)
+
+      // C. Stats
+      setStats({
+        totalClients: clients.length,
+        avgEvs: totalEvsCount > 0 ? Math.round(totalEvsSum / totalEvsCount) : 0,
+        auditsThisMonth: auditsThisMonthCount
+      })
+
+      // D. Chart Data
+      setDistribution([
+        { name: 'Elite (90+)', value: distributionCounts['Elite'], color: '#16a34a' }, // Green-600
+        { name: 'Verde (70-89)', value: distributionCounts['Verde'], color: '#4ade80' }, // Green-400
+        { name: 'Ámbar (50-69)', value: distributionCounts['Ambar'], color: '#fbbf24' }, // Amber-400
+        { name: 'Rojo (<50)', value: distributionCounts['Rojo'], color: '#ef4444' }, // Red-500
+        { name: 'Sin Data', value: distributionCounts['Sin Auditoría'], color: '#9ca3af' }, // Gray-400
+      ])
+
+    } catch (error) {
+      console.error('Error fetching dashboard:', error)
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  if (loading) {
+    return <div className="flex h-screen items-center justify-center"><Loader2 className="h-10 w-10 animate-spin text-primary" /></div>
+  }
+
   return (
-    <div className="flex min-h-screen items-center justify-center bg-zinc-50 font-sans dark:bg-black">
-      <main className="flex min-h-screen w-full max-w-3xl flex-col items-center justify-between py-32 px-16 bg-white dark:bg-black sm:items-start">
-        <Image
-          className="dark:invert"
-          src="/next.svg"
-          alt="Next.js logo"
-          width={100}
-          height={20}
-          priority
-        />
-        <div className="flex flex-col items-center gap-6 text-center sm:items-start sm:text-left">
-          <h1 className="max-w-xs text-3xl font-semibold leading-10 tracking-tight text-black dark:text-zinc-50">
-            To get started, edit the page.tsx file.
-          </h1>
-          <p className="max-w-md text-lg leading-8 text-zinc-600 dark:text-zinc-400">
-            Looking for a starting point or more instructions? Head over to{" "}
-            <a
-              href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Templates
-            </a>{" "}
-            or the{" "}
-            <a
-              href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Learning
-            </a>{" "}
-            center.
-          </p>
+    <div className="container mx-auto py-8 space-y-8">
+      <div className="flex justify-between items-center">
+        <div>
+          <h1 className="text-4xl font-bold tracking-tight">Torre de Control</h1>
+          <p className="text-muted-foreground mt-1">Resumen ejecutivo del performance de la cartera.</p>
         </div>
-        <div className="flex flex-col gap-4 text-base font-medium sm:flex-row">
-          <a
-            className="flex h-12 w-full items-center justify-center gap-2 rounded-full bg-foreground px-5 text-background transition-colors hover:bg-[#383838] dark:hover:bg-[#ccc] md:w-[158px]"
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            <Image
-              className="dark:invert"
-              src="/vercel.svg"
-              alt="Vercel logomark"
-              width={16}
-              height={16}
-            />
-            Deploy Now
-          </a>
-          <a
-            className="flex h-12 w-full items-center justify-center rounded-full border border-solid border-black/[.08] px-5 transition-colors hover:border-transparent hover:bg-black/[.04] dark:border-white/[.145] dark:hover:bg-[#1a1a1a] md:w-[158px]"
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Documentation
-          </a>
-        </div>
-      </main>
+        <button
+          onClick={() => router.push('/clients')}
+          className="inline-flex items-center justify-center rounded-md text-sm font-medium ring-offset-background transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50 bg-primary text-primary-foreground hover:bg-primary/90 h-10 px-4 py-2"
+        >
+          <Users className="mr-2 h-4 w-4" /> Gestionar Clientes
+        </button>
+      </div>
+
+      <Separator />
+
+      {/* Metrics Cards */}
+      <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+        <Card>
+          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+            <CardTitle className="text-sm font-medium">Total Clientes</CardTitle>
+            <Users className="h-4 w-4 text-muted-foreground" />
+          </CardHeader>
+          <CardContent>
+            <div className="text-2xl font-bold">{stats.totalClients}</div>
+            <p className="text-xs text-muted-foreground">Activos en plataforma</p>
+          </CardContent>
+        </Card>
+        <Card>
+          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+            <CardTitle className="text-sm font-medium">Promedio EVS</CardTitle>
+            <Activity className="h-4 w-4 text-muted-foreground" />
+          </CardHeader>
+          <CardContent>
+            <div className="text-2xl font-bold">{stats.avgEvs}/100</div>
+            <p className="text-xs text-muted-foreground">Calidad general de la cartera</p>
+          </CardContent>
+        </Card>
+        <Card>
+          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+            <CardTitle className="text-sm font-medium">Auditorías (Mes)</CardTitle>
+            <CalendarDays className="h-4 w-4 text-muted-foreground" />
+          </CardHeader>
+          <CardContent>
+            <div className="text-2xl font-bold">{stats.auditsThisMonth}</div>
+            <p className="text-xs text-muted-foreground">Realizadas este mes</p>
+          </CardContent>
+        </Card>
+      </div>
+
+      <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-7">
+
+        {/* Evolution Table (Clients) */}
+        <Card className="col-span-4">
+          <CardHeader>
+            <CardTitle>Evolución de Cartera</CardTitle>
+            <CardDescription>Estado actual y cambio respecto a la última auditoría.</CardDescription>
+          </CardHeader>
+          <CardContent>
+            <div className="space-y-4">
+              {clientsWithEvolution.slice(0, 5).map((client) => {
+                const latestScore = client.latestAudit?.score_total || 0
+                const prevScore = client.previousAudit?.score_total || 0
+                const diff = latestScore - prevScore
+
+                return (
+                  <div key={client.id} className="flex items-center justify-between border-b pb-4 last:border-0 last:pb-0">
+                    <div className="space-y-1">
+                      <p className="text-sm font-medium leading-none">{client.nombre}</p>
+                      <p className="text-xs text-muted-foreground">{client.dominio}</p>
+                    </div>
+                    <div className="flex items-center gap-4">
+                      <Badge variant={
+                        client.status === 'Elite' ? 'default' :
+                          client.status === 'Verde' ? 'secondary' :
+                            client.status === 'Ambar' ? 'outline' : 'destructive'
+                      }>
+                        {client.status}
+                      </Badge>
+
+                      <div className="flex items-center gap-2 w-16 justify-end">
+                        <span className="font-bold">{client.latestAudit ? latestScore : '-'}</span>
+                        {client.latestAudit && client.previousAudit ? (
+                          diff > 0 ? <TrendingUp className="h-4 w-4 text-green-500" /> :
+                            diff < 0 ? <TrendingDown className="h-4 w-4 text-red-500" /> :
+                              <Minus className="h-4 w-4 text-muted-foreground" />
+                        ) : <span className="w-4" />}
+
+                      </div>
+                    </div>
+                  </div>
+                )
+              })}
+            </div>
+          </CardContent>
+        </Card>
+
+        {/* Distribution Chart & Recent Audits */}
+        <Card className="col-span-3">
+          <CardHeader>
+            <CardTitle>Distribución EVS</CardTitle>
+            <CardDescription>Clientes por rango de puntaje.</CardDescription>
+          </CardHeader>
+          <CardContent>
+            <div className="h-[200px] w-full">
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart data={distribution}>
+                  <XAxis dataKey="name" fontSize={12} tickLine={false} axisLine={false} hide />
+                  <Tooltip
+                    cursor={{ fill: 'transparent' }}
+                    contentStyle={{ borderRadius: '8px' }}
+                  />
+                  <Bar dataKey="value" radius={[4, 4, 0, 0]}>
+                    {distribution.map((entry, index) => (
+                      <Cell key={`cell-${index}`} fill={entry.color} />
+                    ))}
+                  </Bar>
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+
+            <div className="mt-8">
+              <h4 className="border-b pb-2 mb-4 text-sm font-semibold">Últimas Auditorías</h4>
+              <div className="space-y-4">
+                {auditList.map((audit) => (
+                  <div key={audit.id} className="flex items-center justify-between text-sm">
+                    <div className="flex items-center gap-2">
+                      <div className={`w-2 h-2 rounded-full ${(audit.score_total || 0) >= 90 ? 'bg-green-600' :
+                        (audit.score_total || 0) >= 70 ? 'bg-green-400' :
+                          (audit.score_total || 0) >= 50 ? 'bg-yellow-400' : 'bg-red-500'
+                        }`} />
+                      <span>{audit.client_name}</span>
+                    </div>
+                    <div className="text-muted-foreground">
+                      {new Date(audit.fecha).toLocaleDateString()}
+                    </div>
+                  </div>
+                ))}
+                {auditList.length === 0 && <p className="text-muted-foreground text-sm">No hay auditorías recientes.</p>}
+              </div>
+            </div>
+
+          </CardContent>
+        </Card>
+      </div>
     </div>
-  );
+  )
 }
