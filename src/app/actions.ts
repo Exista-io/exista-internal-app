@@ -1,74 +1,26 @@
 'use server'
 
 import * as cheerio from 'cheerio';
-import { generateObject, generateText, tool } from 'ai';
+import { generateObject } from 'ai';
 import { google } from '@ai-sdk/google';
+import { tavily } from '@tavily/core';
 import { z } from 'zod';
 
 // --- CONFIGURATION ---
-// Roleplaying "Gemini 3 Flash" as requested (mapping to 1.5 Flash for availability)
-// In "Dec 2025", we assume 'gemini-1.5-flash' is the stable fast model or we use the latest alias.
-const MODEL_FAST = google('gemini-1.5-flash');
-const MODEL_REASONING = google('gemini-1.5-pro'); // For complex off-site
+// December 2025 Stack: Vercel AI SDK 6 + Gemini 3 Flash
+// --- CONFIGURATION ---
+// "Gemini 3 Flash" requested -> Using latest stable Flash.
+// Switching Reasoning model to Flash as well to avoid "1.5-pro not found" error.
+// --- CONFIGURATION ---
+// STRICT DIRECTIVE: Gemini 3 Flash.
+// Using preview model ID for Dec 2025 availability.
+const MODEL_FAST = google('gemini-3-flash-preview');
+const MODEL_REASONING = google('gemini-3-flash-preview');
 
-// --- TOOLS ---
-
-// Real Web Search Tool (Tavily or Perplexity)
-// If APIs are missing, we perform a "Poor Man's Search" via direct fetch if URL is known, 
-// or strictly fail. We DO NOT mock with Math.random.
-// Define Schema separately for type inference
-const searchSchema = z.object({
-    query: z.string().describe('The search query to execute')
-});
-
-const searchWebTool = tool({
-    description: 'Search the live web for information about a brand, market, or entity.',
-    parameters: searchSchema,
-    execute: async ({ query }: z.infer<typeof searchSchema>) => {
-        const apiKey = process.env.TAVILY_API_KEY || process.env.PERPLEXITY_API_KEY;
-        const provider = process.env.TAVILY_API_KEY ? 'tavily' : 'perplexity';
-
-        console.log(`[Agent] Searching: "${query}" using ${provider || 'No Key'}`);
-
-        if (!apiKey) {
-            return JSON.stringify({ error: "CONFIGURATION_ERROR: API Key for Tavily or Perplexity is missing." });
-        }
-
-        try {
-            if (provider === 'tavily') {
-                const res = await fetch("https://api.tavily.com/search", {
-                    method: "POST",
-                    headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify({ api_key: apiKey, query, search_depth: "basic", max_results: 3 })
-                });
-                const data = await res.json();
-                const results = Array.isArray(data.results) ? data.results.map((r: any) => ({ title: r.title, url: r.url, snippet: r.content })) : [];
-                return JSON.stringify({ source: "Tavily", results });
-            }
-            if (provider === 'perplexity') {
-                const res = await fetch("https://api.perplexity.ai/chat/completions", {
-                    method: "POST",
-                    headers: {
-                        "Authorization": `Bearer ${apiKey}`,
-                        "Content-Type": "application/json"
-                    },
-                    body: JSON.stringify({
-                        model: "sonar-reasoning",
-                        messages: [{ role: "user", content: query }]
-                    })
-                });
-                const data = await res.json();
-                const summary = data.choices?.[0]?.message?.content || "No content";
-                return JSON.stringify({ source: "Perplexity", summary });
-            }
-        } catch (error) {
-            console.error("Search API Error", error);
-            return JSON.stringify({ error: "External Search API Failed." });
-        }
-        return JSON.stringify({ error: "Unknown Provider" });
-    }
-});
-
+// Initialize Tavily Client (Zero Mock Search)
+const tavilyClient = process.env.TAVILY_API_KEY
+    ? tavily({ apiKey: process.env.TAVILY_API_KEY })
+    : null;
 
 // --- ACTIONS ---
 
@@ -82,8 +34,8 @@ export interface ScanResult {
 }
 
 /**
- * Action: Semantic On-site Analysis
- * Uses Gemini 3 (Fast) to read HTML and judge quality.
+ * Action: Semantic On-site Analysis (EVS v1.0)
+ * Uses Gemini 3 to read HTML and judge quality based on Readiness, Structure, Authority.
  */
 export async function scanWebsite(domain: string): Promise<ScanResult & {
     readiness_score: number,
@@ -109,8 +61,13 @@ export async function scanWebsite(domain: string): Promise<ScanResult & {
         notas: ''
     };
 
+    if (!process.env.GOOGLE_GENERATIVE_AI_API_KEY) {
+        results.notas = "Error: Falta GOOGLE_GENERATIVE_AI_API_KEY. No se puede realizar el análisis semántico.";
+        return results;
+    }
+
     try {
-        // 1. Technical Fetch (Real Request)
+        // 1. Technical Fetch
         const [robotsRes, sitemapRes, llmsRes] = await Promise.allSettled([
             fetch(`${url}/robots.txt`, { next: { revalidate: 0 } }),
             fetch(`${url}/sitemap.xml`, { method: 'HEAD' }),
@@ -132,44 +89,55 @@ export async function scanWebsite(domain: string): Promise<ScanResult & {
         if ($('script[type="application/ld+json"]').length > 0) results.schema_ok = true;
 
         // Extract Text Context for Gemini
-        const textContent = $('body').text().replace(/\s+/g, ' ').substring(0, 10000); // Increased context for Gemini 3
+        const textContent = $('body').text().replace(/\s+/g, ' ').substring(0, 15000);
         const headings = $('h1, h2, h3').map((i, el) => $(el).text()).get().join(' > ');
+        const metaDesc = $('meta[name="description"]').attr('content') || '';
 
-        // 3. GENERATE OBJECT (Semantic Analysis)
-        // Agent judges the content quality naturally.
+        // 3. GENERATE OBJECT (EVS v1.0 Analysis)
         const analysis = await generateObject({
             model: MODEL_FAST,
             schema: z.object({
-                readiness_score: z.number().min(0).max(10).describe("Score mostly based on Answer Boxes presence and high content density."),
-                structure_score: z.number().min(0).max(10).describe("Score based on logical H1-H2-H3 hierarchy matching user intent."),
-                authority_score: z.number().min(0).max(10).describe("Score based on E-E-A-T signals (Authorship, Contact, Socials)."),
-                justification: z.string().describe("Concise explanation of the scores citing specific elements found.")
+                readiness_score: z.number().min(0).max(10),
+                structure_score: z.number().min(0).max(10),
+                authority_score: z.number().min(0).max(10),
+                justification: z.string()
             }),
             prompt: `
-            Analyze this webpage content for AI/LLM Optimization (AIO).
+            Role: EVS (Expert Visibility System) Audit AI.
+            Target: Analyze webpage content for AI Optimization.
             
-            Headings Structure: ${headings}
-            Content Sample: ${textContent.substring(0, 3000)}...
+            Context:
+            - Headings: ${headings}
+            - Meta: ${metaDesc}
+            - Content Sample: ${textContent.substring(0, 5000)}...
 
-            Criteria:
-            - Readiness: Do concise <p> definitions follow headings? Is it 'citation-ready'?
-            - Structure: Does it answer Questions (What is, How to)?
-            - Authority: Are there clear trust signals?
+            Evaluate 3 Pillars (Strict Scoring 0-10):
+            1. READINESS:
+               - Are there clear "Answer Boxes" definitions (e.g. <p> directly after <h2>)?
+               - Is the content dense and factual?
+               - Is it citation-ready for LLMs?
+            
+            2. STRUCTURE:
+               - Do H1-H2-H3 follow a logical hierarchy?
+               - Does it answer specific Intent Questions (What is, How to, Pricing)?
+            
+            3. AUTHORITY (E-E-A-T):
+               - Are there real trust signals (Author bios, Physical Address, Phone Numbers, Social Links)?
+               - Does the content feel expert-written?
 
-            Be strict. This is for an expert audit.
+            Output: Scores and a concise technical justification (in Spanish).
             `
         });
 
         results.readiness_score = analysis.object.readiness_score;
         results.structure_score = analysis.object.structure_score;
         results.authority_score = analysis.object.authority_score;
-        results.notas = `🤖 **Análisis Semántico (Gemini 3)**:\n${analysis.object.justification}`;
-        summaryPoints.push("✅ Análisis Semántico completado.");
+        results.notas = `🤖 **Análisis Gemini 3 (On-site)**:\n${analysis.object.justification}`;
+        summaryPoints.push("✅ Análisis Semántico EVS v1.0 completado.");
 
     } catch (e) {
         console.error("Scan Error", e);
-        summaryPoints.push("❌ Error en análisis (Verificar Keys/URL).");
-        results.notas = "Error: No se pudo realizar el análisis semántico. Verifique API Keys.";
+        results.notas = "Error: Falló el análisis semántico. " + (e instanceof Error ? e.message : String(e));
     }
 
     results.summary = summaryPoints.join('\n');
@@ -177,9 +145,12 @@ export async function scanWebsite(domain: string): Promise<ScanResult & {
 }
 
 /**
- * Action: Suggest Queries (Business Analysis)
+ * Action: Suggest Queries
+ * Uses Gemini to analyze the business and suggest high-intent queries.
  */
 export async function suggestQueries(service: string, market: string, brand: string): Promise<string[]> {
+    if (!process.env.GOOGLE_GENERATIVE_AI_API_KEY) return ["Error: Configurar API Key"];
+
     try {
         const { object } = await generateObject({
             model: MODEL_FAST,
@@ -187,24 +158,28 @@ export async function suggestQueries(service: string, market: string, brand: str
                 queries: z.array(z.string()).length(6)
             }),
             prompt: `
-            Generate 6 high-value "Money Queries" for the brand "${brand}" offering "${service}" in "${market}".
-            Focus on what users ACTUALLY search to buy or compare.
-            Include:
-            - 2 Informational (Definition/Guide)
-            - 2 Comparative (Best X, Vs Y)
-            - 2 Transactional (Price, Agency)
+            Analyze the business: "${brand}" offering "${service}" in "${market}".
+            Generate 6 High-Value Search Queries that users would realistically type into Google/AI to find this service.
+            
+            Types:
+            - 2 Informational (e.g. "Que es [service]...", "Guia de...")
+            - 2 Comparative (e.g. "Mejores agencias de...", "[Brand] vs...")
+            - 2 Transactional (e.g. "Precio de...", "Contratar [service]...")
+            
+            Return ONLY the queries.
             `
         });
         return object.queries;
     } catch (e) {
         console.error("Query Gen Error", e);
-        return [`Error: Configurar API Key`];
+        return ["Error al generar queries."];
     }
 }
 
 /**
- * Action: Real Off-site Research (Agentic Loop)
- * Uses Search Tool to Find Evidence.
+ * Action: Off-site Reputation Analysis (RAG Pattern)
+ * 1. Tavily Search (Reviews, Wiki)
+ * 2. Gemini Analysis (Consistency, Reputation)
  */
 export async function analyzeOffsiteQualitative(brand: string, market: string): Promise<{
     entity_consistency_score: number;
@@ -212,32 +187,50 @@ export async function analyzeOffsiteQualitative(brand: string, market: string): 
     reputation_score: number;
     notas: string;
 }> {
+    if (!tavilyClient) {
+        return {
+            entity_consistency_score: 0,
+            canonical_sources_presence: false,
+            reputation_score: 0,
+            notas: "⚠️ Error: Falta TAVILY_API_KEY. No se puede investigar."
+        };
+    }
+
     try {
-        // Multi-step Agent searching for evidence
+        // 1. Perform Real Searches (Parallel)
+        const [reviewsData, wikiData, pricingData] = await Promise.all([
+            tavilyClient.search(`${brand} reviews opiniones ${market}`, { search_depth: "advanced", max_results: 5 }),
+            tavilyClient.search(`${brand} wikipedia crunchbase`, { search_depth: "basic", max_results: 3 }),
+            tavilyClient.search(`${brand} pricing prices costos`, { search_depth: "basic", max_results: 3 })
+        ]);
+
+        const combinedContext = `
+        Search 1 (Reviews):\n${JSON.stringify(reviewsData.results)}\n
+        Search 2 (Wiki/Canonical):\n${JSON.stringify(wikiData.results)}\n
+        Search 3 (Pricing):\n${JSON.stringify(pricingData.results)}
+        `;
+
+        // 2. Gemini Analysis
         const { object } = await generateObject({
-            model: MODEL_REASONING, // Slower but smarter
-            tools: { searchWebTool },
-            maxSteps: 5, // Allow agent to search multiple times if needed
+            model: MODEL_REASONING,
             schema: z.object({
                 consistency: z.number().min(0).max(10),
                 canonical: z.boolean(),
                 reputation: z.number().min(0).max(10),
-                justification: z.string().describe("Detailed notes including URLs and sources found.")
+                justification: z.string()
             }),
-            system: `You are an Auditor. You MUST search the web to find evidence. Do not hallucinate scores.
-            If searching fails or returns no results for the brand, score 0 and state 'No evidence found'.`,
             prompt: `
-            Investigate the brand "${brand}" in "${market}".
-            1. Search for "${brand} reviews" or "opiniones".
-            2. Search for "${brand} wikipedia" or "crunchbase".
-            3. Search for "${brand} pricing" or "servicios".
+            You are an Expert Auditor investigating the brand "${brand}".
+            
+            Analyze the following Real Search Results found on Tavily:
+            ${combinedContext}
 
-            Determine:
-            - Entity Consistency: Is the brand message consistent across results?
-            - Canonical: Did you find Wikipedia/Wikidata/Crunchbase?
-            - Reputation: What is the sentiment of the top 5 results?
+            Task:
+            1. **Consistency**: Is the entity clearly defined across sources? (0-10)
+            2. **Canonical**: Is there a Wikipedia, Crunchbase, or Official Wikidata profile? (Boolean)
+            3. **Reputation**: Analyze the sentiment of the reviews found. (0-10, 5 is neutral, 0 is bad, 10 is excellent).
 
-            Return the scores and citation-rich notes.
+            Output: Scores and a detailed Note citing specific sources/URLs found in the context.
             `
         });
 
@@ -245,54 +238,68 @@ export async function analyzeOffsiteQualitative(brand: string, market: string): 
             entity_consistency_score: object.consistency,
             canonical_sources_presence: object.canonical,
             reputation_score: object.reputation,
-            notas: `🕵️ **Investigación Real (Agent)**:\n${object.justification}`
+            notas: `🌍 **Investigación Real (Tavily + Gemini)**:\n${object.justification}`
         };
 
     } catch (e) {
-        console.error("Offsite Agent Error", e);
+        console.error("Offsite Analysis Error", e);
         return {
             entity_consistency_score: 0,
             canonical_sources_presence: false,
             reputation_score: 0,
-            notas: "⚠️ **Error de Agente**: No se pudo completar la investigación real. Verifique TAVILY_API_KEY o PERPLEXITY_API_KEY."
+            notas: "Error durante la investigación Off-site. " + String(e)
         };
     }
 }
 
 /**
- * Action: Share of Voice (Agentic Search)
+ * Action: Share of Voice (Direct Tavily Search)
+ * Searches query and checks if brand is in results.
  */
 export async function checkShareOfVoice(query: string, brand: string, competitors: string[]) {
-    try {
-        const { object } = await generateObject({
-            model: MODEL_REASONING,
-            tools: { searchWebTool },
-            maxSteps: 3,
-            schema: z.object({
-                mentioned: z.boolean(),
-                sentiment: z.enum(['Positive', 'Neutral', 'Negative']),
-                preview: z.string()
-            }),
-            prompt: `
-            Search for "${query}".
-            Look at the top results.
-            Does the brand "${brand}" appear in the top summaries or organic results?
-            
-            Return brief preview of what was found.
-            `
-        });
-
-        return {
-            mentioned: object.mentioned,
-            sentiment: object.sentiment,
-            raw_response_preview: object.preview,
-            competitors_mentioned: []
-        };
-    } catch (e) {
+    if (!tavilyClient) {
         return {
             mentioned: false,
             sentiment: "Neutral",
-            raw_response_preview: "Error: Search capabilities unavailable.",
+            raw_response_preview: "Error: Falta TAVILY_API_KEY",
+            competitors_mentioned: []
+        };
+    }
+
+    try {
+        // Real Search
+        const response = await tavilyClient.search(query, {
+            search_depth: "basic",
+            max_results: 10,
+            include_domains: [] // Can filter if needed
+        });
+
+        // Analyze Results
+        const brandLower = brand.toLowerCase();
+        const foundItem = response.results.find((r: any) =>
+            r.title.toLowerCase().includes(brandLower) ||
+            r.content.toLowerCase().includes(brandLower) ||
+            r.url.toLowerCase().includes(brandLower)
+        );
+
+        const mentioned = !!foundItem;
+        const preview = mentioned
+            ? `✅ Encontrado en: ${foundItem.title} (${foundItem.url})`
+            : `❌ No encontrado en los top 10 resultados para "${query}".`;
+
+        return {
+            mentioned,
+            sentiment: "Neutral", // Hard to judge sentiment purely from snippet without LLM, keeping neutral/factual.
+            raw_response_preview: preview,
+            competitors_mentioned: []
+        };
+
+    } catch (e) {
+        console.error("SoV Search Error", e);
+        return {
+            mentioned: false,
+            sentiment: "Neutral",
+            raw_response_preview: "Error en búsqueda Tavily.",
             competitors_mentioned: []
         };
     }
@@ -302,3 +309,4 @@ export async function analyzeQuery(query: string, brand: string, engine: string)
     const sov = await checkShareOfVoice(query, brand, []);
     return { mentioned: sov.mentioned, reason: sov.raw_response_preview, sources: [] };
 }
+
