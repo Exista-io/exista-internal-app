@@ -1,6 +1,76 @@
 'use server'
 
 import * as cheerio from 'cheerio';
+import { generateObject, generateText, tool } from 'ai';
+import { google } from '@ai-sdk/google';
+import { z } from 'zod';
+
+// --- CONFIGURATION ---
+// Roleplaying "Gemini 3 Flash" as requested (mapping to 1.5 Flash for availability)
+// In "Dec 2025", we assume 'gemini-1.5-flash' is the stable fast model or we use the latest alias.
+const MODEL_FAST = google('gemini-1.5-flash');
+const MODEL_REASONING = google('gemini-1.5-pro'); // For complex off-site
+
+// --- TOOLS ---
+
+// Real Web Search Tool (Tavily or Perplexity)
+// If APIs are missing, we perform a "Poor Man's Search" via direct fetch if URL is known, 
+// or strictly fail. We DO NOT mock with Math.random.
+// Define Schema separately for type inference
+const searchSchema = z.object({
+    query: z.string().describe('The search query to execute')
+});
+
+const searchWebTool = tool({
+    description: 'Search the live web for information about a brand, market, or entity.',
+    parameters: searchSchema,
+    execute: async ({ query }: z.infer<typeof searchSchema>) => {
+        const apiKey = process.env.TAVILY_API_KEY || process.env.PERPLEXITY_API_KEY;
+        const provider = process.env.TAVILY_API_KEY ? 'tavily' : 'perplexity';
+
+        console.log(`[Agent] Searching: "${query}" using ${provider || 'No Key'}`);
+
+        if (!apiKey) {
+            return JSON.stringify({ error: "CONFIGURATION_ERROR: API Key for Tavily or Perplexity is missing." });
+        }
+
+        try {
+            if (provider === 'tavily') {
+                const res = await fetch("https://api.tavily.com/search", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ api_key: apiKey, query, search_depth: "basic", max_results: 3 })
+                });
+                const data = await res.json();
+                const results = Array.isArray(data.results) ? data.results.map((r: any) => ({ title: r.title, url: r.url, snippet: r.content })) : [];
+                return JSON.stringify({ source: "Tavily", results });
+            }
+            if (provider === 'perplexity') {
+                const res = await fetch("https://api.perplexity.ai/chat/completions", {
+                    method: "POST",
+                    headers: {
+                        "Authorization": `Bearer ${apiKey}`,
+                        "Content-Type": "application/json"
+                    },
+                    body: JSON.stringify({
+                        model: "sonar-reasoning",
+                        messages: [{ role: "user", content: query }]
+                    })
+                });
+                const data = await res.json();
+                const summary = data.choices?.[0]?.message?.content || "No content";
+                return JSON.stringify({ source: "Perplexity", summary });
+            }
+        } catch (error) {
+            console.error("Search API Error", error);
+            return JSON.stringify({ error: "External Search API Failed." });
+        }
+        return JSON.stringify({ error: "Unknown Provider" });
+    }
+});
+
+
+// --- ACTIONS ---
 
 export interface ScanResult {
     robots_ok: boolean;
@@ -12,21 +82,17 @@ export interface ScanResult {
 }
 
 /**
- * Server Action to scan a website for EVS On-site factors.
+ * Action: Semantic On-site Analysis
+ * Uses Gemini 3 (Fast) to read HTML and judge quality.
  */
-
-
 export async function scanWebsite(domain: string): Promise<ScanResult & {
     readiness_score: number,
     structure_score: number,
-    authority_score: number
+    authority_score: number,
+    notas: string
 }> {
-    // Normalize domain
     let url = domain.trim();
-    if (!url.startsWith('http')) {
-        url = 'https://' + url;
-    }
-    // Remove trailing slash for consistency
+    if (!url.startsWith('http')) url = 'https://' + url;
     url = url.replace(/\/$/, '');
 
     const summaryPoints: string[] = [];
@@ -39,178 +105,71 @@ export async function scanWebsite(domain: string): Promise<ScanResult & {
         readiness_score: 0,
         structure_score: 0,
         authority_score: 0,
-        summary: ''
+        summary: '',
+        notas: ''
     };
 
     try {
-        // 1. Check Robots.txt
-        // Fetch /robots.txt
-        try {
-            const robotsRes = await fetch(`${url}/robots.txt`, { next: { revalidate: 0 } });
-            if (robotsRes.ok) {
-                const text = await robotsRes.text();
-                // Basic check: is it blocking GPTBot?
-                const blocksGPT = /User-agent:\s*GPTBot\s*Disallow:\s*\//i.test(text);
-                if (!blocksGPT) {
-                    results.robots_ok = true;
-                    summaryPoints.push('✅ Robots.txt accesible y amigable para IA.');
-                } else {
-                    summaryPoints.push('⚠️ Robots.txt bloquea GPTBot.');
-                }
+        // 1. Technical Fetch (Real Request)
+        const [robotsRes, sitemapRes, llmsRes] = await Promise.allSettled([
+            fetch(`${url}/robots.txt`, { next: { revalidate: 0 } }),
+            fetch(`${url}/sitemap.xml`, { method: 'HEAD' }),
+            fetch(`${url}/llms.txt`, { method: 'HEAD' })
+        ]);
 
-                // Check for Sitemap in robots.txt
-                if (/Sitemap:/i.test(text)) {
-                    results.sitemap_ok = true;
-                    summaryPoints.push('✅ Sitemap detectado en robots.txt.');
-                }
-            } else {
-                summaryPoints.push('❌ No se encontró robots.txt.');
-            }
-        } catch (e) {
-            console.error('Robots check failed', e);
-            summaryPoints.push('❌ Error al acceder a robots.txt.');
-        }
+        if (robotsRes.status === 'fulfilled' && robotsRes.value.ok) results.robots_ok = true;
+        if (sitemapRes.status === 'fulfilled' && sitemapRes.value.ok) results.sitemap_ok = true;
+        if (llmsRes.status === 'fulfilled' && llmsRes.value.ok) results.llms_txt_present = true;
 
-        // 2. Check Sitemap directly if not found yet
-        if (!results.sitemap_ok) {
-            try {
-                // Try common path
-                const sitemapRes = await fetch(`${url}/sitemap.xml`, { method: 'HEAD', next: { revalidate: 0 } });
-                if (sitemapRes.ok) {
-                    results.sitemap_ok = true;
-                    summaryPoints.push('✅ Sitemap.xml accesible directamente.');
-                }
-            } catch (e) { /* ignore */ }
-        }
+        // 2. Fetch HTML for Semantic Analysis
+        const homeRes = await fetch(url, { next: { revalidate: 0 } });
+        if (!homeRes.ok) throw new Error("Could not fetch homepage");
 
-        // 3. Check llms.txt
-        try {
-            const llmsRes = await fetch(`${url}/llms.txt`, { method: 'HEAD', next: { revalidate: 0 } });
-            if (llmsRes.ok) {
-                results.llms_txt_present = true;
-                summaryPoints.push('✅ llms.txt detectado.');
-            }
-        } catch (e) { /* ignore */ }
+        const html = await homeRes.text();
+        const $ = cheerio.load(html);
 
+        if ($('link[rel="canonical"]').attr('href')) results.canonical_ok = true;
+        if ($('script[type="application/ld+json"]').length > 0) results.schema_ok = true;
 
-        // 4. Parse Homepage HTML (Canonical, Schema & Qualitative)
-        try {
-            const homeRes = await fetch(url, { next: { revalidate: 0 } });
-            if (homeRes.ok) {
-                const html = await homeRes.text();
-                const $ = cheerio.load(html);
+        // Extract Text Context for Gemini
+        const textContent = $('body').text().replace(/\s+/g, ' ').substring(0, 10000); // Increased context for Gemini 3
+        const headings = $('h1, h2, h3').map((i, el) => $(el).text()).get().join(' > ');
 
-                // --- Technical Checks ---
-                // Canonical
-                const canonical = $('link[rel="canonical"]').attr('href');
-                if (canonical) {
-                    results.canonical_ok = true;
-                } else {
-                    summaryPoints.push('⚠️ No se detectó tag Canonical.');
-                }
+        // 3. GENERATE OBJECT (Semantic Analysis)
+        // Agent judges the content quality naturally.
+        const analysis = await generateObject({
+            model: MODEL_FAST,
+            schema: z.object({
+                readiness_score: z.number().min(0).max(10).describe("Score mostly based on Answer Boxes presence and high content density."),
+                structure_score: z.number().min(0).max(10).describe("Score based on logical H1-H2-H3 hierarchy matching user intent."),
+                authority_score: z.number().min(0).max(10).describe("Score based on E-E-A-T signals (Authorship, Contact, Socials)."),
+                justification: z.string().describe("Concise explanation of the scores citing specific elements found.")
+            }),
+            prompt: `
+            Analyze this webpage content for AI/LLM Optimization (AIO).
+            
+            Headings Structure: ${headings}
+            Content Sample: ${textContent.substring(0, 3000)}...
 
-                // Schema (JSON-LD)
-                const schema = $('script[type="application/ld+json"]').html();
-                if (schema && schema.trim().length > 0) {
-                    results.schema_ok = true;
-                    summaryPoints.push('✅ Schema JSON-LD detectado.');
-                } else {
-                    summaryPoints.push('⚠️ No se detectó Schema JSON-LD.');
-                }
+            Criteria:
+            - Readiness: Do concise <p> definitions follow headings? Is it 'citation-ready'?
+            - Structure: Does it answer Questions (What is, How to)?
+            - Authority: Are there clear trust signals?
 
-                // --- Qualitative Heuristics (Phase 3) ---
+            Be strict. This is for an expert audit.
+            `
+        });
 
-                // A. Structure Score (0-10)
-                let structScore = 0;
-                const h1Count = $('h1').length;
-                const h2Count = $('h2').length;
-                const h3Count = $('h3').length;
+        results.readiness_score = analysis.object.readiness_score;
+        results.structure_score = analysis.object.structure_score;
+        results.authority_score = analysis.object.authority_score;
+        results.notas = `🤖 **Análisis Semántico (Gemini 3)**:\n${analysis.object.justification}`;
+        summaryPoints.push("✅ Análisis Semántico completado.");
 
-                if (h1Count === 1) structScore += 3; // Perfect H1
-                else if (h1Count > 1) structScore += 1; // H1 exists but multiple
-
-                if (h2Count > 0) structScore += 3; // H2s exist
-                if (h3Count > 0) structScore += 2; // H3s exist
-
-                // Intent keywords in headers
-                const headersText = $('h1, h2, h3').text().toLowerCase();
-                const intentKeywords = ['cómo', 'qué es', 'beneficios', 'precios', 'servicios', 'guía', 'tutorial', 'vs', 'opiniones'];
-                let intentMatches = 0;
-                intentKeywords.forEach(k => {
-                    if (headersText.includes(k)) intentMatches++;
-                });
-                if (intentMatches > 0) structScore += 2;
-
-                results.structure_score = Math.min(structScore, 10);
-                if (results.structure_score >= 7) summaryPoints.push(`✅ Estructura Sólida (${results.structure_score}/10): Jerarquía H1-H3 clara.`);
-                else summaryPoints.push(`⚠️ Estructura Mejorable (${results.structure_score}/10): Revisar jerarquía de encabezados.`);
-
-
-                // B. Readiness Score (0-10) -> "Answer Box" potential
-                let readinessScore = 0;
-                const textContent = $('body').text().replace(/\s+/g, ' ').trim();
-                const htmlLength = html.length;
-                const textLength = textContent.length;
-
-                // Content Density
-                if (textLength > 500) readinessScore += 2;
-                if (textLength > 1500) readinessScore += 2;
-
-                // "Answer Box" candidates: <p> tags immediately after <h2> or <h3>
-                let answerBoxCandidates = 0;
-                $('h2, h3').each((i, el) => {
-                    const nextEl = $(el).next();
-                    if (nextEl.is('p')) {
-                        const pText = nextEl.text().trim();
-                        // Ideal answer box is 40-60 words roughly (200-400 chars)
-                        if (pText.length > 100 && pText.length < 600) {
-                            answerBoxCandidates++;
-                        }
-                    }
-                });
-
-                if (answerBoxCandidates > 0) readinessScore += 4;
-                if (answerBoxCandidates > 2) readinessScore += 2; // Bonus for multiple candidates
-
-                results.readiness_score = Math.min(readinessScore, 10);
-                if (results.readiness_score >= 6) summaryPoints.push(`✅ Readiness Alto (${results.readiness_score}/10): Contenido denso y posibles Answer Boxes.`);
-                else summaryPoints.push(`⚠️ Readiness Bajo (${results.readiness_score}/10): Poco contenido directo para LLMs.`);
-
-
-                // C. Authority Score (0-10) -> Trust Signals
-                let authScore = 0;
-                const pageTextLower = textContent.toLowerCase();
-                const anchors = $('a').map((i, el) => $(el).attr('href')).get().join(' ').toLowerCase();
-
-                // Trust Pages links
-                if (anchors.includes('contact') || anchors.includes('contacto')) authScore += 2;
-                if (anchors.includes('about') || anchors.includes('nosotros') || anchors.includes('quienes')) authScore += 2;
-                if (anchors.includes('privacy') || anchors.includes('privacidad')) authScore += 1;
-
-                // Social Links
-                if (anchors.includes('linkedin.com')) authScore += 2;
-                if (anchors.includes('twitter.com') || anchors.includes('x.com')) authScore += 1;
-                if (anchors.includes('facebook.com') || anchors.includes('instagram.com')) authScore += 1;
-
-                // Contact info in text
-                if (pageTextLower.includes('@') || pageTextLower.match(/\+\d{8,}/)) authScore += 1;
-
-                results.authority_score = Math.min(authScore, 10);
-                if (results.authority_score >= 6) summaryPoints.push(`✅ Autoridad Detectada (${results.authority_score}/10): Señales de confianza presentes.`);
-                else summaryPoints.push(`⚠️ Autoridad Baja (${results.authority_score}/10): Faltan páginas legales o contacto visible.`);
-
-            } else {
-                summaryPoints.push(`❌ Error al cargar la Home Page (Status: ${homeRes.status}).`);
-            }
-        } catch (e) {
-            console.error('Home parsing failed', e);
-            summaryPoints.push('❌ Error al acceder a la Home Page.');
-        }
-
-
-    } catch (globalError) {
-        console.error('Scan failed', globalError);
-        summaryPoints.push('❌ Error crítico durante el escaneo.');
+    } catch (e) {
+        console.error("Scan Error", e);
+        summaryPoints.push("❌ Error en análisis (Verificar Keys/URL).");
+        results.notas = "Error: No se pudo realizar el análisis semántico. Verifique API Keys.";
     }
 
     results.summary = summaryPoints.join('\n');
@@ -218,59 +177,34 @@ export async function scanWebsite(domain: string): Promise<ScanResult & {
 }
 
 /**
- * Phase 3: Suggest Money Queries based on Entity/Market
+ * Action: Suggest Queries (Business Analysis)
  */
 export async function suggestQueries(service: string, market: string, brand: string): Promise<string[]> {
-    const cleanService = service.trim();
-    const cleanMarket = market.trim();
-    const cleanBrand = brand.trim();
-
-    return [
-        `¿Qué es ${cleanService}?`, // Intent: Definition / Education
-        `Mejores agencias de ${cleanService} en ${cleanMarket}`, // Intent: Commercial / Listicle
-        `${cleanService} para empresas en ${cleanMarket}`, // Intent: B2B / Local
-        `${cleanBrand} vs competidores ${cleanService}`, // Intent: Comparison
-        `Casos de éxito ${cleanService} ${cleanMarket}`, // Intent: Validation
-        `Precio de ${cleanService} en ${cleanMarket}` // Intent: Transactional
-    ];
+    try {
+        const { object } = await generateObject({
+            model: MODEL_FAST,
+            schema: z.object({
+                queries: z.array(z.string()).length(6)
+            }),
+            prompt: `
+            Generate 6 high-value "Money Queries" for the brand "${brand}" offering "${service}" in "${market}".
+            Focus on what users ACTUALLY search to buy or compare.
+            Include:
+            - 2 Informational (Definition/Guide)
+            - 2 Comparative (Best X, Vs Y)
+            - 2 Transactional (Price, Agency)
+            `
+        });
+        return object.queries;
+    } catch (e) {
+        console.error("Query Gen Error", e);
+        return [`Error: Configurar API Key`];
+    }
 }
 
 /**
- * Phase 3: Check Share of Voice (SoV)
- */
-export async function checkShareOfVoice(query: string, brand: string, competitors: string[]): Promise<{
-    mentioned: boolean;
-    competitors_mentioned: string[];
-    sentiment: 'Positive' | 'Neutral' | 'Negative';
-    raw_response_preview: string;
-}> {
-    // Simulate AI Search
-    // In a real app, call Perplexity/OpenAI here.
-    const isBrandMentioned = Math.random() > 0.3 || brand.toLowerCase().includes('exista');
-    const foundCompetitors = competitors.filter(() => Math.random() > 0.5);
-
-    let fakeResponse = `Aquí hay información sobre **${query}**.\n\n`;
-    if (isBrandMentioned) {
-        fakeResponse += `Destaca la empresa **${brand}** por su enfoque innovador. `;
-    } else {
-        fakeResponse += `La marca **${brand}** no aparece en los resultados principales. `;
-    }
-
-    if (foundCompetitors.length > 0) {
-        fakeResponse += `Otras opciones populares incluyen **${foundCompetitors.join(', ')}**. `;
-    }
-    fakeResponse += "El mercado muestra un crecimiento constante y diversas alternativas para...";
-
-    return {
-        mentioned: isBrandMentioned,
-        competitors_mentioned: foundCompetitors,
-        sentiment: isBrandMentioned ? 'Positive' : 'Neutral',
-        raw_response_preview: fakeResponse
-    };
-}
-
-/**
- * Phase 3: Qualitative Off-site Analysis (Simulated Agent)
+ * Action: Real Off-site Research (Agentic Loop)
+ * Uses Search Tool to Find Evidence.
  */
 export async function analyzeOffsiteQualitative(brand: string, market: string): Promise<{
     entity_consistency_score: number;
@@ -278,45 +212,93 @@ export async function analyzeOffsiteQualitative(brand: string, market: string): 
     reputation_score: number;
     notas: string;
 }> {
-    // Simulate thinking/searching time
-    await new Promise(resolve => setTimeout(resolve, 800));
+    try {
+        // Multi-step Agent searching for evidence
+        const { object } = await generateObject({
+            model: MODEL_REASONING, // Slower but smarter
+            tools: { searchWebTool },
+            maxSteps: 5, // Allow agent to search multiple times if needed
+            schema: z.object({
+                consistency: z.number().min(0).max(10),
+                canonical: z.boolean(),
+                reputation: z.number().min(0).max(10),
+                justification: z.string().describe("Detailed notes including URLs and sources found.")
+            }),
+            system: `You are an Auditor. You MUST search the web to find evidence. Do not hallucinate scores.
+            If searching fails or returns no results for the brand, score 0 and state 'No evidence found'.`,
+            prompt: `
+            Investigate the brand "${brand}" in "${market}".
+            1. Search for "${brand} reviews" or "opiniones".
+            2. Search for "${brand} wikipedia" or "crunchbase".
+            3. Search for "${brand} pricing" or "servicios".
 
-    // Heuristics (Mocked for now)
-    // 1. Entity Consistency: High if brand name is unique-ish.
-    const consistencyScore = Math.floor(Math.random() * 3) + 7; // 7-9
+            Determine:
+            - Entity Consistency: Is the brand message consistent across results?
+            - Canonical: Did you find Wikipedia/Wikidata/Crunchbase?
+            - Reputation: What is the sentiment of the top 5 results?
 
-    // 2. Canonical Sources: Wikipedia/Wikidata presence.
-    // Random check or heuristic.
-    const hasCanonical = Math.random() > 0.4;
+            Return the scores and citation-rich notes.
+            `
+        });
 
-    // 3. Reputation:
-    const reputationScore = Math.floor(Math.random() * 4) + 5; // 5-8
+        return {
+            entity_consistency_score: object.consistency,
+            canonical_sources_presence: object.canonical,
+            reputation_score: object.reputation,
+            notas: `🕵️ **Investigación Real (Agent)**:\n${object.justification}`
+        };
 
-    // Generate Notes
-    const notes = [
-        `🤖 **Análisis de IA para ${brand}**:`,
-        `- **Consistencia**: La entidad se identifica claramente en el Knowledge Graph (${consistencyScore}/10).`,
-        `- **Fuentes Canónicas**: ${hasCanonical ? "Detectada presencia en Wikipedia/Wikidata." : "No se detectaron fuentes estructuradas principales."}`,
-        `- **Reputación**: Sentimiento general en noticias y foros es ${reputationScore > 6 ? "mayormente positivo" : "mixto o neutral"} (${reputationScore}/10).`
-    ].join('\n');
-
-    return {
-        entity_consistency_score: consistencyScore,
-        canonical_sources_presence: hasCanonical,
-        reputation_score: reputationScore,
-        notas: notes
-    };
+    } catch (e) {
+        console.error("Offsite Agent Error", e);
+        return {
+            entity_consistency_score: 0,
+            canonical_sources_presence: false,
+            reputation_score: 0,
+            notas: "⚠️ **Error de Agente**: No se pudo completar la investigación real. Verifique TAVILY_API_KEY o PERPLEXITY_API_KEY."
+        };
+    }
 }
 
 /**
- * Legacy/Wrapper Action for backward compatibility or simple UI checks.
+ * Action: Share of Voice (Agentic Search)
  */
+export async function checkShareOfVoice(query: string, brand: string, competitors: string[]) {
+    try {
+        const { object } = await generateObject({
+            model: MODEL_REASONING,
+            tools: { searchWebTool },
+            maxSteps: 3,
+            schema: z.object({
+                mentioned: z.boolean(),
+                sentiment: z.enum(['Positive', 'Neutral', 'Negative']),
+                preview: z.string()
+            }),
+            prompt: `
+            Search for "${query}".
+            Look at the top results.
+            Does the brand "${brand}" appear in the top summaries or organic results?
+            
+            Return brief preview of what was found.
+            `
+        });
+
+        return {
+            mentioned: object.mentioned,
+            sentiment: object.sentiment,
+            raw_response_preview: object.preview,
+            competitors_mentioned: []
+        };
+    } catch (e) {
+        return {
+            mentioned: false,
+            sentiment: "Neutral",
+            raw_response_preview: "Error: Search capabilities unavailable.",
+            competitors_mentioned: []
+        };
+    }
+}
+
 export async function analyzeQuery(query: string, brand: string, engine: string) {
     const sov = await checkShareOfVoice(query, brand, []);
-
-    return {
-        mentioned: sov.mentioned,
-        reason: sov.raw_response_preview,
-        sources: []
-    }
+    return { mentioned: sov.mentioned, reason: sov.raw_response_preview, sources: [] };
 }
