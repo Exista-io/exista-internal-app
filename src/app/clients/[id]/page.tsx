@@ -16,9 +16,9 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Separator } from '@/components/ui/separator'
 import { Badge } from '@/components/ui/badge'
-import { Plus, Trash2, ArrowLeft, Save, Loader2, Sparkles } from 'lucide-react'
+import { Plus, Trash2, ArrowLeft, Save, Loader2, Sparkles, Bot } from 'lucide-react'
 import { toast } from 'sonner'
-import { analyzeQuery } from '@/app/actions'
+import { analyzeQuery, scanWebsite } from '@/app/actions'
 import { Switch } from '@/components/ui/switch'
 
 // Helper type for Offsite Query UI
@@ -39,8 +39,7 @@ export default function ClientDetailPage({ params }: { params: { id: string } })
     const [saving, setSaving] = useState(false)
     const [lastAudit, setLastAudit] = useState<Audit | null>(null)
 
-    // Audit Form State
-    // Audit State
+    const [scanning, setScanning] = useState(false)
     const [auditType, setAuditType] = useState<'mini' | 'full' | 'retainer'>('full')
     const [onSite, setOnSite] = useState({
         robots_ok: false,
@@ -50,7 +49,8 @@ export default function ClientDetailPage({ params }: { params: { id: string } })
         llms_txt_present: false,  // Phase 1
         answer_box_score: 0,      // 0-10
         h1_h2_structure_score: 0, // 0-10 Phase 1
-        authority_signals_score: 0 // 0-10 Phase 1
+        authority_signals_score: 0, // 0-10 Phase 1
+        notas: ''
     })
 
     // Offsite State
@@ -124,6 +124,37 @@ export default function ClientDetailPage({ params }: { params: { id: string } })
 
     const [analyzingIndex, setAnalyzingIndex] = useState<number | null>(null)
 
+    const handleScanSite = async () => {
+        if (!client || !client.dominio) {
+            toast.error("El cliente no tiene un dominio configurado.");
+            return;
+        }
+
+        setScanning(true);
+        try {
+            const results = await scanWebsite(client.dominio);
+
+            setOnSite(prev => ({
+                ...prev,
+                robots_ok: results.robots_ok,
+                sitemap_ok: results.sitemap_ok,
+                llms_txt_present: results.llms_txt_present,
+                canonical_ok: results.canonical_ok,
+                // If schema found, we set a generic type or keep existing if manually typed
+                schema_type: results.schema_ok ? (prev.schema_type || "JSON-LD Detectado") : prev.schema_type,
+                notas: results.summary
+            }));
+
+            toast.success("Escaneo completado. Verificá los resultados.");
+        } catch (error) {
+            console.error("Scan error:", error);
+            toast.error("Error al escanear el sitio.");
+        } finally {
+            setScanning(false);
+        }
+    }
+
+    // ... existing handleAutoCheck ...
     const handleAutoCheck = async (index: number) => {
         if (!client) return
         const query = offsiteQueries[index]
@@ -183,7 +214,7 @@ export default function ClientDetailPage({ params }: { params: { id: string } })
                     llms_txt_present: onSite.llms_txt_present, // Phase 1
                     h1_h2_structure_score: onSite.h1_h2_structure_score, // Phase 1
                     authority_signals_score: onSite.authority_signals_score, // Phase 1
-                    notas: null
+                    notas: onSite.notas
                 } as any)
 
             if (onsiteError) throw onsiteError
@@ -285,9 +316,15 @@ export default function ClientDetailPage({ params }: { params: { id: string } })
                                 <Card className="p-4 h-fit border shadow-sm">
                                     <div className="flex justify-between items-center mb-4">
                                         <h3 className="font-semibold text-lg">On-site (Técnico)</h3>
-                                        <Badge variant={currentEvs.onSiteScore >= 40 ? 'default' : currentEvs.onSiteScore >= 25 ? 'secondary' : 'destructive'}>
-                                            {currentEvs.onSiteScore}/50
-                                        </Badge>
+                                        <div className="flex gap-2">
+                                            <Button size="sm" variant="secondary" onClick={handleScanSite} disabled={scanning || !client.dominio}>
+                                                {scanning ? <Loader2 className="mr-2 h-3 w-3 animate-spin" /> : <Bot className="mr-2 h-3 w-3" />}
+                                                {scanning ? 'Escaneando...' : 'Escanear'}
+                                            </Button>
+                                            <Badge variant={currentEvs.onSiteScore >= 40 ? 'default' : currentEvs.onSiteScore >= 25 ? 'secondary' : 'destructive'}>
+                                                {currentEvs.onSiteScore}/50
+                                            </Badge>
+                                        </div>
                                     </div>
 
                                     <div className="space-y-6">
@@ -391,6 +428,15 @@ export default function ClientDetailPage({ params }: { params: { id: string } })
                                                 />
                                             </div>
                                         </div>
+                                        <div className="space-y-2">
+                                            <Label>Notas del Agente / Auditor</Label>
+                                            <textarea
+                                                className="flex min-h-[80px] w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
+                                                placeholder="Resultados del escaneo automático..."
+                                                value={onSite.notas}
+                                                onChange={(e) => setOnSite({ ...onSite, notas: e.target.value })}
+                                            />
+                                        </div>
                                     </div>
                                 </Card>
 
@@ -464,10 +510,10 @@ export default function ClientDetailPage({ params }: { params: { id: string } })
 
                         </CardContent>
                     </Card>
-                </div>
+                </div >
 
                 {/* Sidebar / Info */}
-                <div className="space-y-6">
+                < div className="space-y-6" >
                     <Card>
                         <CardHeader>
                             <CardTitle>Competidores</CardTitle>
@@ -494,9 +540,9 @@ export default function ClientDetailPage({ params }: { params: { id: string } })
                             <p><strong>Off-site (50%):</strong> Autoridad semántica y presencia en respuestas generativas (LLMs).</p>
                         </CardContent>
                     </Card>
-                </div>
+                </div >
 
-            </div>
-        </div>
+            </div >
+        </div >
     )
 }
