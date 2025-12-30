@@ -258,6 +258,7 @@ export async function analyzeOffsiteQualitative(brand: string, market: string): 
  */
 export async function checkShareOfVoice(query: string, brand: string, competitors: string[]) {
     if (!tavilyClient) {
+        console.error("DEBUG_SOV: Missing Tavily Key");
         return {
             mentioned: false,
             sentiment: "Neutral",
@@ -267,29 +268,49 @@ export async function checkShareOfVoice(query: string, brand: string, competitor
     }
 
     try {
+        console.log(`DEBUG_SOV: Searching for "${query}" looking for brand "${brand}"`);
+
         // Real Search
         const response = await tavilyClient.search(query, {
             search_depth: "basic",
             max_results: 10,
-            include_domains: [] // Can filter if needed
+            include_domains: []
         });
 
+        // Debug: Log simplified results for inspection
+        console.log("DEBUG_TAVILY_RESPONSE:", JSON.stringify(response.results.map((r: any) => ({ t: r.title, u: r.url })), null, 2));
+
         // Analyze Results
-        const brandLower = brand.toLowerCase();
-        const foundItem = response.results.find((r: any) =>
-            r.title.toLowerCase().includes(brandLower) ||
-            r.content.toLowerCase().includes(brandLower) ||
-            r.url.toLowerCase().includes(brandLower)
-        );
+        const brandLower = brand.trim().toLowerCase();
+
+        // Robust Matching: Check Title, Content, and URL
+        const foundItem = response.results.find((r: any) => {
+            const titleMatch = r.title.toLowerCase().includes(brandLower);
+            const contentMatch = r.content?.toLowerCase().includes(brandLower);
+            const urlMatch = r.url.toLowerCase().includes(brandLower);
+
+            if (titleMatch || contentMatch || urlMatch) {
+                console.log(`DEBUG_SOV_MATCH: Found "${brand}" in:`, r.title);
+                return true;
+            }
+            return false;
+        });
 
         const mentioned = !!foundItem;
-        const preview = mentioned
-            ? `✅ Encontrado en: ${foundItem.title} (${foundItem.url})`
-            : `❌ No encontrado en los top 10 resultados para "${query}".`;
+
+        let preview = "";
+        if (mentioned) {
+            preview = `✅ Encontrado en: ${foundItem.title} (${foundItem.url})`; // Return URL as proof
+        } else {
+            // Provide Evidence of absence: List top 3 results found instead
+            const top3 = response.results.slice(0, 3).map((r: any) => `"${r.title}"`).join(", ");
+            preview = `❌ No encontrado. Top 3: ${top3}...`;
+            console.log("DEBUG_SOV_FAIL: Brand not found in top 10 results.");
+        }
 
         return {
             mentioned,
-            sentiment: "Neutral", // Hard to judge sentiment purely from snippet without LLM, keeping neutral/factual.
+            sentiment: "Neutral",
             raw_response_preview: preview,
             competitors_mentioned: []
         };
@@ -299,7 +320,7 @@ export async function checkShareOfVoice(query: string, brand: string, competitor
         return {
             mentioned: false,
             sentiment: "Neutral",
-            raw_response_preview: "Error en búsqueda Tavily.",
+            raw_response_preview: "Error en búsqueda Tavily: " + String(e),
             competitors_mentioned: []
         };
     }
