@@ -37,12 +37,26 @@ export interface OnsiteResult {
   created_at: string;
 }
 
+// Phase 3: Offsite Results (Entity, Rep, SoV)
+export interface OffsiteResult {
+  id: string;
+  audit_id: string;
+  entity_consistency_score: number; // 0-10
+  canonical_sources_presence: boolean;
+  reputation_score: number; // 0-10
+  sov_score: number; // 0-100%
+  notas: string | null;
+  created_at: string;
+}
+
 export interface OffsiteQuery {
   id: string;
   audit_id: string;
   query_text: string;
   engine: string;
   mentioned: boolean;
+  competitors_mentioned: string[]; // Phase 3
+  sentiment: string | null;        // Phase 3
   position: Position | null;
   screenshot_url: string | null;
   created_at: string;

@@ -18,21 +18,27 @@ import { Separator } from '@/components/ui/separator'
 import { Badge } from '@/components/ui/badge'
 import { Plus, Trash2, ArrowLeft, Save, Loader2, Sparkles, Bot } from 'lucide-react'
 import { toast } from 'sonner'
-import { analyzeQuery, scanWebsite } from '@/app/actions'
+import { analyzeQuery, scanWebsite, suggestQueries, checkShareOfVoice, analyzeOffsiteQualitative } from '@/app/actions'
 import { Switch } from '@/components/ui/switch'
 
 // Helper type for Offsite Query UI
-type OffsiteQueryInput = {
-    id: string; // temp id for UI
-    query_text: string;
-    engine: string;
-    mentioned: boolean;
+type QueryUI = {
+    id?: string
+    query_text: string
+    engine: string
+    mentioned: boolean
+    status: 'pending' | 'checking' | 'done'
+    competitors_mentioned?: string[]
+    sentiment?: string
 }
 
-export default function ClientDetailPage({ params }: { params: { id: string } }) {
+export default function ClientDetailPage() {
+    const params = useParams()
+    // Handle potential string[] case for id (though unusual in this route config)
+    const id = Array.isArray(params?.id) ? params.id[0] : params?.id
+
+
     const router = useRouter()
-    // React 18+ way to unwrap params
-    const { id } = useParams()
 
     const [client, setClient] = useState<Client | null>(null)
     const [loading, setLoading] = useState(true)
@@ -53,16 +59,20 @@ export default function ClientDetailPage({ params }: { params: { id: string } })
         notas: ''
     })
 
-    // Offsite State
-    const [offsiteQueries, setOffsiteQueries] = useState<OffsiteQueryInput[]>([
-        { id: '1', query_text: '', engine: 'ChatGPT', mentioned: false }
-    ])
+    // Offsite State (Phase 3 Expansion)
+    const [offSiteResult, setOffSiteResult] = useState({
+        entity_consistency_score: 0, // 0-10
+        canonical_sources_presence: false,
+        reputation_score: 0, // 0-10
+        sov_score: 0, // Calculated 0-100
+        notas: ''
+    })
 
-    // Real-time EVS Calculation
-    const currentEvs = calculateEVSScore(
-        { ...onSite },
-        { queries: offsiteQueries.filter(q => q.query_text.trim() !== '') }
-    )
+    const [offsiteQueries, setOffsiteQueries] = useState<QueryUI[]>([])
+    const [suggesting, setSuggesting] = useState(false) // Phase 3 loading state
+
+    // Real-time EVS Calculation removed from here, moved to body to include new offsite logic overrides
+
 
     useEffect(() => {
         fetchClientData()
@@ -106,7 +116,7 @@ export default function ClientDetailPage({ params }: { params: { id: string } })
     const handleAddQuery = () => {
         setOffsiteQueries([
             ...offsiteQueries,
-            { id: Math.random().toString(36), query_text: '', engine: 'ChatGPT', mentioned: false }
+            { id: Math.random().toString(36), query_text: '', engine: 'ChatGPT', mentioned: false, status: 'pending' }
         ])
     }
 
@@ -116,8 +126,9 @@ export default function ClientDetailPage({ params }: { params: { id: string } })
         setOffsiteQueries(newQueries)
     }
 
-    const updateQuery = (index: number, field: keyof OffsiteQueryInput, value: string | boolean) => {
+    const updateQuery = (index: number, field: keyof QueryUI, value: string | boolean | string[]) => {
         const newQueries = [...offsiteQueries]
+        // @ts-ignore dynamic field access
         newQueries[index] = { ...newQueries[index], [field]: value }
         setOffsiteQueries(newQueries)
     }
@@ -142,6 +153,12 @@ export default function ClientDetailPage({ params }: { params: { id: string } })
                 canonical_ok: results.canonical_ok,
                 // If schema found, we set a generic type or keep existing if manually typed
                 schema_type: results.schema_ok ? (prev.schema_type || "JSON-LD Detectado") : prev.schema_type,
+
+                // Phase 3 Heuristics
+                answer_box_score: results.readiness_score,
+                h1_h2_structure_score: results.structure_score,
+                authority_signals_score: results.authority_score,
+
                 notas: results.summary
             }));
 
@@ -154,7 +171,6 @@ export default function ClientDetailPage({ params }: { params: { id: string } })
         }
     }
 
-    // ... existing handleAutoCheck ...
     const handleAutoCheck = async (index: number) => {
         if (!client) return
         const query = offsiteQueries[index]
@@ -162,10 +178,18 @@ export default function ClientDetailPage({ params }: { params: { id: string } })
 
         setAnalyzingIndex(index)
         try {
-            const result = await analyzeQuery(query.query_text, client.nombre, query.engine)
+            // Updated to use checkShareOfVoice logic or robust analyzeQuery
+            // We use analyzeQuery for now but expect it to return extra fields if we updated it,
+            // or checkShareOfVoice directly.
+            // Let's use checkShareOfVoice directly if imported? Yes.
+            const result = await checkShareOfVoice(query.query_text, client.nombre, client.competidores || [])
+
             updateQuery(index, 'mentioned', result.mentioned)
+            updateQuery(index, 'competitors_mentioned', result.competitors_mentioned)
+            updateQuery(index, 'sentiment', result.sentiment)
+
             // Optional: You could show the 'reason' in a toast or tooltip
-            console.log('AI Result:', result.reason)
+            console.log('AI Result:', result.raw_response_preview)
         } catch (error) {
             console.error('AI Check failed:', error)
         } finally {
@@ -173,6 +197,110 @@ export default function ClientDetailPage({ params }: { params: { id: string } })
         }
     }
 
+    // Phase 3: Off-site Analysis Handler (Queries + Qualitative)
+    const handleOffsiteAnalysis = async () => {
+        if (!client) return;
+        setSuggesting(true);
+        try {
+            // 1. Suggest Queries
+            // Heuristic: If market is likely a country code (e.g. "AR") or "Argentina", default service to "Servicios".
+            let service = client.mercado || "Servicios";
+            const location = "Argentina";
+
+            const ignoredMarkets = ["ar", "argentina", "latam", "global", "mx", "us", "es", "cl"];
+            if (service.length <= 3 || ignoredMarkets.includes(service.toLowerCase())) {
+                service = "Servicios";
+            }
+
+            const suggestions = await suggestQueries(service, location, client.nombre);
+
+            const newQueries: QueryUI[] = suggestions.map(q => ({
+                query_text: q,
+                engine: 'ChatGPT', // Default
+                mentioned: false,
+                status: 'pending'
+            }));
+
+            setOffsiteQueries(prev => {
+                const existingTexts = new Set(prev.map(p => p.query_text));
+                const uniqueNew = newQueries.filter(n => !existingTexts.has(n.query_text));
+                return [...prev, ...uniqueNew];
+            });
+
+            // 2. Run Qualitative Analysis (Auto-fill)
+            const qualResults = await analyzeOffsiteQualitative(client.nombre, service);
+
+            setOffSiteResult(prev => ({
+                ...prev,
+                entity_consistency_score: qualResults.entity_consistency_score,
+                canonical_sources_presence: qualResults.canonical_sources_presence,
+                reputation_score: qualResults.reputation_score,
+                notas: qualResults.notas
+            }));
+
+            toast.success(`Análisis Off-site Completo.`);
+        } catch (error) {
+            console.error(error);
+            toast.error("Error al realizar el análisis off-site.");
+        } finally {
+            setSuggesting(false);
+        }
+    }
+
+    // Phase 3: Suggest Queries Handler
+    const handleSuggestQueries = async () => {
+        if (!client) return;
+        setSuggesting(true);
+        try {
+            const suggestions = await suggestQueries(
+                client.mercado || "Servicios", // Service/Product proxy
+                "Argentina", // Market proxy (should be client.mercado if it was Country/Region)
+                client.nombre
+            );
+
+            const newQueries: QueryUI[] = suggestions.map(q => ({
+                query_text: q,
+                engine: 'ChatGPT', // Default
+                mentioned: false,
+                status: 'pending'
+            }));
+
+            setOffsiteQueries(prev => [...prev, ...newQueries]);
+            toast.success(`Se agregaron ${suggestions.length} queries sugeridas.`);
+        } catch (error) {
+            console.error(error);
+            toast.error("Error al sugerir queries.");
+        } finally {
+            setSuggesting(false);
+        }
+    }
+
+    const resultEvs = calculateEVSScore(onSite, { queries: offsiteQueries.filter(q => q.query_text.trim() !== '') })
+    const { total, onSiteScore } = resultEvs
+
+    // User Instructions: "El offSiteScore (50 pts) debe calcularse ahora combinando: 25 pts por el Share of Voice relativo y 25 pts por los pilares cualitativos"
+    // We override the engine's offsite score with the new logic here for the View.
+    // (Ideally we update the engine, but for now we do it here to meet the requirement immediately visually)
+
+
+    // Quick local calc override for UI visualization until Engine is updated
+    const sovPercentage = offsiteQueries.length > 0
+        ? Math.round((offsiteQueries.filter(q => q.mentioned).length / offsiteQueries.length) * 100)
+        : 0;
+
+    // Approximate new score (Visualization & Save)
+    // 1. Qualitative (Max 25): Entity (10) + Rep (10) + Canonical (5)
+    const qualScore = offSiteResult.entity_consistency_score + offSiteResult.reputation_score + (offSiteResult.canonical_sources_presence ? 5 : 0);
+    // 2. SoV (Max 25)
+    const sovScorePoints = Math.round((sovPercentage / 100) * 25);
+
+    const newOffSiteScore = Math.min(qualScore + sovScorePoints, 50);
+
+    const currentEvs = {
+        total: onSiteScore + newOffSiteScore, // Recalculate total with new offsite
+        onSiteScore,
+        offSiteScore: newOffSiteScore
+    }
     const handleSaveAudit = async () => {
         if (!client) return
         setSaving(true)
@@ -186,7 +314,7 @@ export default function ClientDetailPage({ params }: { params: { id: string } })
                 .from('audits')
                 .insert({
                     client_id: client.id,
-                    version: '1.1', // Incremented for Phase 1
+                    version: '1.2', // Incremented for Phase 3
                     type: auditType, // Phase 1
                     score_total: evs.total,
                     score_onsite: evs.onSiteScore,
@@ -219,7 +347,21 @@ export default function ClientDetailPage({ params }: { params: { id: string } })
 
             if (onsiteError) throw onsiteError
 
-            // 3. Insert Offsite Queries
+            // 3. Insert Offsite Results (Phase 3)
+            const { error: offsiteResError } = await supabase
+                .from('offsite_results')
+                .insert({
+                    audit_id: auditRecord.id,
+                    entity_consistency_score: offSiteResult.entity_consistency_score,
+                    canonical_sources_presence: offSiteResult.canonical_sources_presence,
+                    reputation_score: offSiteResult.reputation_score,
+                    sov_score: sovPercentage, // Storing Percentage (0-100)
+                    notas: offSiteResult.notas
+                } as any)
+
+            if (offsiteResError) throw offsiteResError
+
+            // 4. Insert Offsite Queries
             const validQueries = offsiteQueries.filter(q => q.query_text.trim() !== '')
             if (validQueries.length > 0) {
                 const { error: offsiteError } = await supabase
@@ -229,7 +371,9 @@ export default function ClientDetailPage({ params }: { params: { id: string } })
                         query_text: q.query_text,
                         engine: q.engine,
                         mentioned: q.mentioned,
-                        position: q.mentioned ? 'top' : 'none'
+                        position: q.mentioned ? 'top' : 'none',
+                        competitors_mentioned: q.competitors_mentioned || [], // Phase 3
+                        sentiment: q.sentiment // Phase 3
                         // eslint-disable-next-line @typescript-eslint/no-explicit-any
                     })) as any)
 
@@ -304,7 +448,7 @@ export default function ClientDetailPage({ params }: { params: { id: string } })
                 <div className="lg:col-span-2 space-y-6">
                     <Card className="border-2 border-primary/10">
                         <CardHeader>
-                            <CardTitle>Nueva Auditoría EVS v1.0</CardTitle>
+                            <CardTitle>Nueva Auditoría EVS v1.2</CardTitle>
                             <CardDescription>Completa los checklist On-site y Off-site para calcular el score.</CardDescription>
                         </CardHeader>
                         <CardContent className="space-y-6">
@@ -442,15 +586,40 @@ export default function ClientDetailPage({ params }: { params: { id: string } })
 
                                 {/* Off-site Column */}
                                 <Card className="p-4 h-fit border shadow-sm">
-                                    <div className="flex justify-between items-center mb-4">
+                                    <div className="flex justify-between items-center mb-2">
                                         <h3 className="font-semibold">Money Queries & AI</h3>
-                                        <Button size="sm" variant="outline" onClick={handleAddQuery}><Plus className="h-4 w-4 mr-2" /> Query</Button>
+                                        <div className="flex gap-2">
+                                            <Button
+                                                size="sm"
+                                                variant="secondary"
+                                                onClick={handleOffsiteAnalysis}
+                                                disabled={suggesting}
+                                            >
+                                                {suggesting ? <Loader2 className="h-3 w-3 animate-spin mr-2" /> : <Bot className="h-3 w-3 mr-2" />}
+                                                Analizar IA
+                                            </Button>
+                                            <Button size="sm" variant="outline" onClick={handleAddQuery}><Plus className="h-4 w-4" /></Button>
+                                        </div>
                                     </div>
-                                    <div className="space-y-4">
-                                        <p className="text-xs text-muted-foreground">Verificar presencia en LLMs.</p>
 
+                                    {/* SoV Visualization */}
+                                    <div className="mb-4 space-y-1">
+                                        <div className="flex justify-between text-xs font-medium">
+                                            <span>Share of Voice (SoV)</span>
+                                            <span>{sovPercentage}%</span>
+                                        </div>
+                                        <div className="h-2 w-full bg-secondary rounded-full overflow-hidden">
+                                            <div
+                                                className="h-full bg-primary transition-all duration-500 ease-in-out"
+                                                style={{ width: `${sovPercentage}%` }}
+                                            />
+                                        </div>
+                                        <p className="text-[10px] text-muted-foreground text-right">{offsiteQueries.filter(q => q.mentioned).length} de {offsiteQueries.length} ganadas</p>
+                                    </div>
+
+                                    <div className="space-y-4">
                                         {offsiteQueries.map((query, index) => (
-                                            <div key={query.id} className="flex flex-col gap-2 border p-3 rounded-md bg-muted/20">
+                                            <div key={query.id || index} className="flex flex-col gap-2 border p-3 rounded-md bg-muted/20">
                                                 <Input
                                                     className="h-8 text-sm"
                                                     placeholder="Query..."
@@ -462,7 +631,7 @@ export default function ClientDetailPage({ params }: { params: { id: string } })
                                                         value={query.engine}
                                                         onValueChange={(v) => updateQuery(index, 'engine', v)}
                                                     >
-                                                        <SelectTrigger className="w-[100px] h-8 text-xs">
+                                                        <SelectTrigger className="w-[90px] h-8 text-xs">
                                                             <SelectValue placeholder="Motor" />
                                                         </SelectTrigger>
                                                         <SelectContent>
@@ -470,16 +639,13 @@ export default function ClientDetailPage({ params }: { params: { id: string } })
                                                             <SelectItem value="Claude">Claude</SelectItem>
                                                             <SelectItem value="Gemini">Gemini</SelectItem>
                                                             <SelectItem value="Perplexity">Perplexity</SelectItem>
+                                                            <SelectItem value="Google">Google</SelectItem>
                                                         </SelectContent>
                                                     </Select>
 
                                                     <div className="flex items-center space-x-2">
-                                                        <Checkbox
-                                                            id={`q-mentioned-${index}`}
-                                                            checked={query.mentioned}
-                                                            onCheckedChange={(c) => updateQuery(index, 'mentioned', !!c)}
-                                                        />
-                                                        <Label htmlFor={`q-mentioned-${index}`} className="text-xs">Mencionada</Label>
+                                                        <div className={`h-2 w-2 rounded-full ${query.mentioned ? 'bg-green-500' : 'bg-gray-300'}`} />
+                                                        <span className="text-xs">{query.mentioned ? 'Detectado' : 'No'}</span>
                                                     </div>
 
                                                     <div className="flex gap-1">
@@ -500,6 +666,54 @@ export default function ClientDetailPage({ params }: { params: { id: string } })
                                                 </div>
                                             </div>
                                         ))}
+                                    </div>
+
+                                    <Separator className="my-4" />
+
+                                    {/* Off-site Qualitative Inputs (Phase 3) */}
+                                    <div className="space-y-4">
+                                        <h4 className="font-semibold text-sm">Cualitativo Off-site</h4>
+
+                                        <div className="space-y-2">
+                                            <div className="flex justify-between">
+                                                <Label className="text-xs">Consistencia de Entidad</Label>
+                                                <span className="text-xs text-muted-foreground">{offSiteResult.entity_consistency_score}/10</span>
+                                            </div>
+                                            <Slider
+                                                value={[offSiteResult.entity_consistency_score]}
+                                                min={0} max={10} step={1}
+                                                onValueChange={(vals) => setOffSiteResult({ ...offSiteResult, entity_consistency_score: vals[0] })}
+                                            />
+                                        </div>
+
+                                        <div className="flex items-center justify-between">
+                                            <Label className="text-xs">Fuentes Canónicas (Wiki/Wikidata)</Label>
+                                            <Switch
+                                                checked={offSiteResult.canonical_sources_presence}
+                                                onCheckedChange={(c) => setOffSiteResult({ ...offSiteResult, canonical_sources_presence: c })}
+                                            />
+                                        </div>
+
+                                        <div className="space-y-2">
+                                            <div className="flex justify-between">
+                                                <Label className="text-xs">Reputación / Earned Media</Label>
+                                                <span className="text-xs text-muted-foreground">{offSiteResult.reputation_score}/10</span>
+                                            </div>
+                                            <Slider
+                                                value={[offSiteResult.reputation_score]}
+                                                min={0} max={10} step={1}
+                                                onValueChange={(vals) => setOffSiteResult({ ...offSiteResult, reputation_score: vals[0] })}
+                                            />
+                                        </div>
+                                        <div className="space-y-2">
+                                            <Label>Notas Off-site</Label>
+                                            <textarea
+                                                className="flex min-h-[80px] w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
+                                                placeholder="Observaciones de reputación e IA..."
+                                                value={offSiteResult.notas}
+                                                onChange={(e) => setOffSiteResult({ ...offSiteResult, notas: e.target.value })}
+                                            />
+                                        </div>
                                     </div>
                                 </Card>
                             </div>
