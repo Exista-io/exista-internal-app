@@ -15,9 +15,10 @@ export interface Audit {
   id: string;
   client_id: string;
   version: string;
-  score_total: number | null;
-  score_onsite: number | null;
-  score_offsite: number | null;
+  type: 'mini' | 'full' | 'retainer'; // Phase 1
+  score_total: number;
+  score_onsite: number;
+  score_offsite: number;
   fecha: string;
 }
 
@@ -28,7 +29,10 @@ export interface OnsiteResult {
   sitemap_ok: boolean;
   schema_type: string | null;
   canonical_ok: boolean;
-  answer_box_score: number | null; // 0-10
+  llms_txt_present: boolean;         // Phase 1
+  h1_h2_structure_score: number;     // Phase 1 (0-10)
+  authority_signals_score: number;   // Phase 1 (0-10)
+  answer_box_score: number;          // (0-10)
   notas: string | null;
   created_at: string;
 }

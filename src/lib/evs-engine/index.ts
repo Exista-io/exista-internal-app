@@ -3,8 +3,11 @@ export interface OnSiteData {
     robots_ok: boolean;
     sitemap_ok: boolean;
     schema_type: string | null;
-    canonical_ok: boolean; // Not in original request but mentioned in Schema
-    answer_box_score: number; // 0-10
+    canonical_ok: boolean;
+    llms_txt_present: boolean;       // New Phase 1
+    answer_box_score: number;        // 0-10 (Readiness)
+    h1_h2_structure_score: number;   // 0-10 (New Phase 1)
+    authority_signals_score: number; // 0-10 (New Phase 1)
 }
 
 export interface OffSiteData {
@@ -15,7 +18,7 @@ export interface OffSiteData {
 }
 
 /**
- * Calculates the EVS v1.0 Score
+ * Calculates the EVS v1.0 Score (Phase 1 Expansion)
  * Weighted 50% On-site / 50% Off-site
  */
 export function calculateEVSScore(onSite: OnSiteData, offSite: OffSiteData): {
@@ -24,23 +27,38 @@ export function calculateEVSScore(onSite: OnSiteData, offSite: OffSiteData): {
     offSiteScore: number;
 } {
     // --- On-site Calculation (Max 50 points) ---
-    // User Request:
-    // "Sumá puntos por Robots.txt, Sitemap y validación de Schema."
-    // "El 'Readiness Score (0-10)' debe ponderarse para llegar a los 25 puntos restantes."
+    // Methodology Update Phase 1:
+    // A. Binary Factors (Total 25 pts -> 5 pts each)
+    //    1. Robots.txt
+    //    2. Sitemap
+    //    3. Schema
+    //    4. Canonical
+    //    5. llms.txt
 
-    // 1. Binaries (Robots, Sitemap, Schema): 25 points total.
-    //    ~8.33 points each.
-    const BINARY_WEIGHT = 25 / 3;
-
+    const BINARY_ITEM_VALUE = 5;
     let onSiteRaw = 0;
-    if (onSite.robots_ok) onSiteRaw += BINARY_WEIGHT;
-    if (onSite.sitemap_ok) onSiteRaw += BINARY_WEIGHT;
-    if (onSite.schema_type && onSite.schema_type.length > 0) onSiteRaw += BINARY_WEIGHT;
 
-    // 2. Answer Box Readiness (0-10 scale): 25 points max.
-    //    Score 0-10 -> 0-25 pts (Multiply by 2.5)
-    const answerBoxPoints = (onSite.answer_box_score || 0) * 2.5;
-    onSiteRaw += answerBoxPoints;
+    if (onSite.robots_ok) onSiteRaw += BINARY_ITEM_VALUE;
+    if (onSite.sitemap_ok) onSiteRaw += BINARY_ITEM_VALUE;
+    if (onSite.schema_type && onSite.schema_type.length > 0) onSiteRaw += BINARY_ITEM_VALUE;
+    if (onSite.canonical_ok) onSiteRaw += BINARY_ITEM_VALUE;
+    if (onSite.llms_txt_present) onSiteRaw += BINARY_ITEM_VALUE;
+
+    // B. Scale Factors (Total 25 pts / 3 items = ~8.33 pts each)
+    //    1. Readiness (Answer Box) (0-10)
+    //    2. Structure (H1/H2) (0-10)
+    //    3. Authority Signals (0-10)
+
+    // Each 0-10 score contributes to a max of 8.333... points.
+    // Factor = 25 / 30 = 0.8333...
+
+    const SCALE_FACTOR = 25 / 30; // approx 0.8333
+
+    const readinessPoints = (onSite.answer_box_score || 0) * SCALE_FACTOR;
+    const structurePoints = (onSite.h1_h2_structure_score || 0) * SCALE_FACTOR;
+    const authorityPoints = (onSite.authority_signals_score || 0) * SCALE_FACTOR;
+
+    onSiteRaw += readinessPoints + structurePoints + authorityPoints;
 
     // Cap at 50 just in case
     const onSiteScore = Math.min(Math.round(onSiteRaw), 50);

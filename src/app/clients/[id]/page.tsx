@@ -1,7 +1,8 @@
 'use client'
 
-import { useEffect, useState, use } from 'react'
-import { useRouter } from 'next/navigation'
+import { useRef, useState, useEffect } from 'react'
+import { useParams, useRouter } from 'next/navigation'
+import Link from 'next/link'
 import { supabase } from '@/lib/supabase'
 import { Client, Audit } from '@/types/database'
 import { calculateEVSScore } from '@/lib/evs-engine'
@@ -18,6 +19,7 @@ import { Badge } from '@/components/ui/badge'
 import { Plus, Trash2, ArrowLeft, Save, Loader2, Sparkles } from 'lucide-react'
 import { toast } from 'sonner'
 import { analyzeQuery } from '@/app/actions'
+import { Switch } from '@/components/ui/switch'
 
 // Helper type for Offsite Query UI
 type OffsiteQueryInput = {
@@ -27,10 +29,10 @@ type OffsiteQueryInput = {
     mentioned: boolean;
 }
 
-export default function ClientDetailPage({ params }: { params: Promise<{ id: string }> }) {
+export default function ClientDetailPage({ params }: { params: { id: string } }) {
     const router = useRouter()
     // React 18+ way to unwrap params
-    const { id } = use(params)
+    const { id } = useParams()
 
     const [client, setClient] = useState<Client | null>(null)
     const [loading, setLoading] = useState(true)
@@ -38,11 +40,17 @@ export default function ClientDetailPage({ params }: { params: Promise<{ id: str
     const [lastAudit, setLastAudit] = useState<Audit | null>(null)
 
     // Audit Form State
+    // Audit State
+    const [auditType, setAuditType] = useState<'mini' | 'full' | 'retainer'>('full')
     const [onSite, setOnSite] = useState({
         robots_ok: false,
         sitemap_ok: false,
         schema_type: '',
-        answer_box_score: 0, // 0-10
+        canonical_ok: false,      // Phase 1
+        llms_txt_present: false,  // Phase 1
+        answer_box_score: 0,      // 0-10
+        h1_h2_structure_score: 0, // 0-10 Phase 1
+        authority_signals_score: 0 // 0-10 Phase 1
     })
 
     // Offsite State
@@ -52,7 +60,7 @@ export default function ClientDetailPage({ params }: { params: Promise<{ id: str
 
     // Real-time EVS Calculation
     const currentEvs = calculateEVSScore(
-        { ...onSite, canonical_ok: true },
+        { ...onSite },
         { queries: offsiteQueries.filter(q => q.query_text.trim() !== '') }
     )
 
@@ -62,6 +70,8 @@ export default function ClientDetailPage({ params }: { params: Promise<{ id: str
     }, []) // Remove id dependency to avoid infinite loop if simple mount. id is stable from params.
 
     const fetchClientData = async () => {
+        if (!id || Array.isArray(id)) return // Handle undefined or array case
+
         setLoading(true)
         // Fetch Client
         const { data: clientData, error: clientError } = await supabase
@@ -73,6 +83,7 @@ export default function ClientDetailPage({ params }: { params: Promise<{ id: str
         if (clientError) {
             console.error('Error fetching client:', clientError)
         } else {
+            console.log("Client fetched", clientData)
             setClient(clientData)
         }
 
@@ -136,23 +147,20 @@ export default function ClientDetailPage({ params }: { params: Promise<{ id: str
         setSaving(true)
 
         // Calculate Score for Save
-        const evs = calculateEVSScore(
-            { ...onSite, canonical_ok: true },
-            { queries: offsiteQueries.filter(q => q.query_text.trim() !== '') }
-        )
+        const evs = currentEvs
 
         try {
-            // 1. Create Audit Record
+            // 1. Insert Audit Header
             const { data: audit, error: auditError } = await supabase
                 .from('audits')
                 .insert({
                     client_id: client.id,
-                    version: '1.0',
+                    version: '1.1', // Incremented for Phase 1
+                    type: auditType, // Phase 1
                     score_total: evs.total,
                     score_onsite: evs.onSiteScore,
                     score_offsite: evs.offSiteScore,
                     fecha: new Date().toISOString()
-                    // eslint-disable-next-line @typescript-eslint/no-explicit-any
                 } as any) // Type assertion bypass until types perfectly match
                 .select()
                 .single()
@@ -171,8 +179,11 @@ export default function ClientDetailPage({ params }: { params: Promise<{ id: str
                     sitemap_ok: onSite.sitemap_ok,
                     schema_type: onSite.schema_type,
                     answer_box_score: onSite.answer_box_score,
-                    canonical_ok: true
-                    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                    canonical_ok: onSite.canonical_ok, // Phase 1
+                    llms_txt_present: onSite.llms_txt_present, // Phase 1
+                    h1_h2_structure_score: onSite.h1_h2_structure_score, // Phase 1
+                    authority_signals_score: onSite.authority_signals_score, // Phase 1
+                    notas: null
                 } as any)
 
             if (onsiteError) throw onsiteError
@@ -267,125 +278,187 @@ export default function ClientDetailPage({ params }: { params: Promise<{ id: str
                         </CardHeader>
                         <CardContent className="space-y-6">
 
-                            <Tabs defaultValue="onsite" className="w-full">
-                                <TabsList className="grid w-full grid-cols-2">
-                                    <TabsTrigger value="onsite">On-site (Técnico)</TabsTrigger>
-                                    <TabsTrigger value="offsite">Off-site (Autoridad)</TabsTrigger>
-                                </TabsList>
+                            {/* Audit Form Grid */}
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
 
-                                {/* ON-SITE TAB */}
-                                <TabsContent value="onsite" className="space-y-6 py-4">
-                                    <div className="grid gap-4 border p-4 rounded-md">
-                                        <h3 className="font-semibold mb-2">Fundamentos Técnicos</h3>
+                                {/* On-site Column */}
+                                <Card className="p-4 h-fit border shadow-sm">
+                                    <div className="flex justify-between items-center mb-4">
+                                        <h3 className="font-semibold text-lg">On-site (Técnico)</h3>
+                                        <Badge variant={currentEvs.onSiteScore >= 40 ? 'default' : currentEvs.onSiteScore >= 25 ? 'secondary' : 'destructive'}>
+                                            {currentEvs.onSiteScore}/50
+                                        </Badge>
+                                    </div>
 
-                                        <div className="flex items-center space-x-2">
-                                            <Checkbox
-                                                id="robots"
-                                                checked={onSite.robots_ok}
-                                                onCheckedChange={(c) => setOnSite({ ...onSite, robots_ok: !!c })}
-                                            />
-                                            <Label htmlFor="robots">Robots.txt optimizado y sin bloqueos críticos</Label>
+                                    <div className="space-y-6">
+                                        {/* Audit Type */}
+                                        <div className="space-y-2">
+                                            <Label>Tipo de Auditoría</Label>
+                                            <Select value={auditType} onValueChange={(v: any) => setAuditType(v)}>
+                                                <SelectTrigger>
+                                                    <SelectValue placeholder="Seleccionar tipo" />
+                                                </SelectTrigger>
+                                                <SelectContent>
+                                                    <SelectItem value="mini">Mini Audit</SelectItem>
+                                                    <SelectItem value="full">Full Audit</SelectItem>
+                                                    <SelectItem value="retainer">Retainer Check</SelectItem>
+                                                </SelectContent>
+                                            </Select>
                                         </div>
+                                        <Separator />
 
-                                        <div className="flex items-center space-x-2">
-                                            <Checkbox
-                                                id="sitemap"
-                                                checked={onSite.sitemap_ok}
-                                                onCheckedChange={(c) => setOnSite({ ...onSite, sitemap_ok: !!c })}
-                                            />
-                                            <Label htmlFor="sitemap">Sitemap.xml actualizado y enviado</Label>
+                                        {/* Binaries */}
+                                        <div className="space-y-3">
+                                            <div className="flex items-center space-x-2">
+                                                <Checkbox
+                                                    id="robots"
+                                                    checked={onSite.robots_ok}
+                                                    onCheckedChange={(c) => setOnSite({ ...onSite, robots_ok: c as boolean })}
+                                                />
+                                                <Label htmlFor="robots">Robots.txt OK</Label>
+                                            </div>
+                                            <div className="flex items-center space-x-2">
+                                                <Checkbox
+                                                    id="sitemap"
+                                                    checked={onSite.sitemap_ok}
+                                                    onCheckedChange={(c) => setOnSite({ ...onSite, sitemap_ok: c as boolean })}
+                                                />
+                                                <Label htmlFor="sitemap">Sitemap.xml OK</Label>
+                                            </div>
+
+                                            <div className="flex items-center justify-between">
+                                                <Label htmlFor="canonical" className="text-sm">Canonical Tags</Label>
+                                                <Switch
+                                                    id="canonical"
+                                                    checked={onSite.canonical_ok}
+                                                    onCheckedChange={(c) => setOnSite({ ...onSite, canonical_ok: c })}
+                                                />
+                                            </div>
+                                            <div className="flex items-center justify-between">
+                                                <Label htmlFor="llms" className="text-sm">llms.txt Present</Label>
+                                                <Switch
+                                                    id="llms"
+                                                    checked={onSite.llms_txt_present}
+                                                    onCheckedChange={(c) => setOnSite({ ...onSite, llms_txt_present: c })}
+                                                />
+                                            </div>
                                         </div>
 
                                         <div className="space-y-2">
-                                            <Label htmlFor="schema">Schema Markup Principal Detectado</Label>
+                                            <Label>Schema Markup</Label>
                                             <Input
-                                                id="schema"
-                                                placeholder="ej. Organization, LocalBusiness, Product..."
+                                                placeholder="Ej: Organization, Product..."
                                                 value={onSite.schema_type}
                                                 onChange={(e) => setOnSite({ ...onSite, schema_type: e.target.value })}
                                             />
-                                            <p className="text-xs text-muted-foreground">Dejar vacío si no se detecta nada.</p>
+                                        </div>
+
+                                        <Separator />
+
+                                        {/* Sliders */}
+                                        <div className="space-y-4">
+                                            <div className="space-y-2">
+                                                <div className="flex justify-between">
+                                                    <Label>Readiness</Label>
+                                                    <span className="text-xs text-muted-foreground">{onSite.answer_box_score}/10</span>
+                                                </div>
+                                                <Slider
+                                                    value={[onSite.answer_box_score]}
+                                                    min={0} max={10} step={1}
+                                                    onValueChange={(vals) => setOnSite({ ...onSite, answer_box_score: vals[0] })}
+                                                />
+                                            </div>
+                                            <div className="space-y-2">
+                                                <div className="flex justify-between">
+                                                    <Label>Estructura H1/H2</Label>
+                                                    <span className="text-xs text-muted-foreground">{onSite.h1_h2_structure_score}/10</span>
+                                                </div>
+                                                <Slider
+                                                    value={[onSite.h1_h2_structure_score]}
+                                                    min={0} max={10} step={1}
+                                                    onValueChange={(vals) => setOnSite({ ...onSite, h1_h2_structure_score: vals[0] })}
+                                                />
+                                            </div>
+                                            <div className="space-y-2">
+                                                <div className="flex justify-between">
+                                                    <Label>Autoridad</Label>
+                                                    <span className="text-xs text-muted-foreground">{onSite.authority_signals_score}/10</span>
+                                                </div>
+                                                <Slider
+                                                    value={[onSite.authority_signals_score]}
+                                                    min={0} max={10} step={1}
+                                                    onValueChange={(vals) => setOnSite({ ...onSite, authority_signals_score: vals[0] })}
+                                                />
+                                            </div>
                                         </div>
                                     </div>
+                                </Card>
 
-                                    <div className="grid gap-4 border p-4 rounded-md">
-                                        <div className="flex justify-between">
-                                            <Label>Answer Box Readiness (0-10)</Label>
-                                            <span className="font-bold">{onSite.answer_box_score}</span>
-                                        </div>
-                                        <Slider
-                                            defaultValue={[0]}
-                                            max={10}
-                                            step={1}
-                                            value={[onSite.answer_box_score]}
-                                            onValueChange={(vals) => setOnSite({ ...onSite, answer_box_score: vals[0] })}
-                                        />
-                                        <p className="text-xs text-muted-foreground">Evaluar estructura de contenido, uso de listas, tablas y definiciones claras.</p>
+                                {/* Off-site Column */}
+                                <Card className="p-4 h-fit border shadow-sm">
+                                    <div className="flex justify-between items-center mb-4">
+                                        <h3 className="font-semibold">Money Queries & AI</h3>
+                                        <Button size="sm" variant="outline" onClick={handleAddQuery}><Plus className="h-4 w-4 mr-2" /> Query</Button>
                                     </div>
-                                </TabsContent>
-
-                                {/* OFF-SITE TAB */}
-                                <TabsContent value="offsite" className="space-y-6 py-4">
                                     <div className="space-y-4">
-                                        <div className="flex justify-between items-center">
-                                            <h3 className="font-semibold">Money Queries & AI Presence</h3>
-                                            <Button size="sm" variant="outline" onClick={handleAddQuery}><Plus className="h-4 w-4 mr-2" /> Agregar Query</Button>
-                                        </div>
-                                        <p className="text-sm text-muted-foreground">Ingresa las keywords principales y verifica si la marca aparece en las respuestas de la IA.</p>
+                                        <p className="text-xs text-muted-foreground">Verificar presencia en LLMs.</p>
 
                                         {offsiteQueries.map((query, index) => (
-                                            <div key={query.id} className="flex gap-4 items-start border p-3 rounded-md bg-muted/20">
-                                                <div className="flex-1 space-y-2">
-                                                    <Input
-                                                        placeholder="Query (ej. 'Mejor seguro de auto')"
-                                                        value={query.query_text}
-                                                        onChange={(e) => updateQuery(index, 'query_text', e.target.value)}
-                                                    />
-                                                    <div className="flex gap-2">
-                                                        <Select
-                                                            value={query.engine}
-                                                            onValueChange={(v) => updateQuery(index, 'engine', v)}
-                                                        >
-                                                            <SelectTrigger className="w-[180px]">
-                                                                <SelectValue placeholder="Motor" />
-                                                            </SelectTrigger>
-                                                            <SelectContent>
-                                                                <SelectItem value="ChatGPT">ChatGPT</SelectItem>
-                                                                <SelectItem value="Claude">Claude</SelectItem>
-                                                                <SelectItem value="Gemini">Gemini</SelectItem>
-                                                                <SelectItem value="Perplexity">Perplexity</SelectItem>
-                                                            </SelectContent>
-                                                        </Select>
+                                            <div key={query.id} className="flex flex-col gap-2 border p-3 rounded-md bg-muted/20">
+                                                <Input
+                                                    className="h-8 text-sm"
+                                                    placeholder="Query..."
+                                                    value={query.query_text}
+                                                    onChange={(e) => updateQuery(index, 'query_text', e.target.value)}
+                                                />
+                                                <div className="flex gap-2 items-center justify-between">
+                                                    <Select
+                                                        value={query.engine}
+                                                        onValueChange={(v) => updateQuery(index, 'engine', v)}
+                                                    >
+                                                        <SelectTrigger className="w-[100px] h-8 text-xs">
+                                                            <SelectValue placeholder="Motor" />
+                                                        </SelectTrigger>
+                                                        <SelectContent>
+                                                            <SelectItem value="ChatGPT">ChatGPT</SelectItem>
+                                                            <SelectItem value="Claude">Claude</SelectItem>
+                                                            <SelectItem value="Gemini">Gemini</SelectItem>
+                                                            <SelectItem value="Perplexity">Perplexity</SelectItem>
+                                                        </SelectContent>
+                                                    </Select>
 
-                                                        <div className="flex items-center space-x-2 border px-3 rounded-md bg-background">
-                                                            <Checkbox
-                                                                id={`q-mentioned-${index}`}
-                                                                checked={query.mentioned}
-                                                                onCheckedChange={(c) => updateQuery(index, 'mentioned', !!c)}
-                                                            />
-                                                            <Label htmlFor={`q-mentioned-${index}`} className="cursor-pointer">Mencionada</Label>
-                                                        </div>
+                                                    <div className="flex items-center space-x-2">
+                                                        <Checkbox
+                                                            id={`q-mentioned-${index}`}
+                                                            checked={query.mentioned}
+                                                            onCheckedChange={(c) => updateQuery(index, 'mentioned', !!c)}
+                                                        />
+                                                        <Label htmlFor={`q-mentioned-${index}`} className="text-xs">Mencionada</Label>
+                                                    </div>
+
+                                                    <div className="flex gap-1">
+                                                        <Button
+                                                            variant="ghost"
+                                                            size="icon"
+                                                            className="h-8 w-8"
+                                                            onClick={() => handleAutoCheck(index)}
+                                                            disabled={analyzingIndex === index || !query.query_text}
+                                                            title="Auto-Check"
+                                                        >
+                                                            {analyzingIndex === index ? <Loader2 className="h-3 w-3 animate-spin" /> : <Sparkles className="h-3 w-3 text-purple-600" />}
+                                                        </Button>
+                                                        <Button variant="ghost" size="icon" className="h-8 w-8 text-destructive" onClick={() => handleRemoveQuery(index)}>
+                                                            <Trash2 className="h-3 w-3" />
+                                                        </Button>
                                                     </div>
                                                 </div>
-                                                <Button
-                                                    variant="outline"
-                                                    size="icon"
-                                                    onClick={() => handleAutoCheck(index)}
-                                                    disabled={analyzingIndex === index || !query.query_text}
-                                                    title="Auto-Check con IA"
-                                                >
-                                                    {analyzingIndex === index ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4 text-purple-600" />}
-                                                </Button>
-                                                <Button variant="ghost" size="icon" className="text-destructive" onClick={() => handleRemoveQuery(index)}>
-                                                    <Trash2 className="h-4 w-4" />
-                                                </Button>
                                             </div>
                                         ))}
                                     </div>
-                                </TabsContent>
-                            </Tabs>
+                                </Card>
+                            </div>
 
-                            <Button className="w-full text-lg" size="lg" onClick={handleSaveAudit} disabled={saving}>
+                            <Button className="w-full text-lg mt-6" size="lg" onClick={handleSaveAudit} disabled={saving}>
                                 {saving ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Guardando...</> : <><Save className="mr-2 h-4 w-4" /> Guardar Auditoría</>}
                             </Button>
 
