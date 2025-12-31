@@ -18,7 +18,8 @@ import { Separator } from '@/components/ui/separator'
 import { Badge } from '@/components/ui/badge'
 import { Plus, Trash2, ArrowLeft, Save, Loader2, Sparkles, Bot, FileText, Download, X } from 'lucide-react'
 import { toast } from 'sonner'
-import { analyzeQuery, scanWebsite, suggestQueries, checkShareOfVoice, analyzeOffsiteQualitative, checkAllEngines, LLMCheckResult, AIEngine, detectIndustry, generateAuditReport, AuditReportData, SERVICE_LIMITS, AuditType } from '@/app/actions'
+import { analyzeQuery, scanWebsite, suggestQueries, checkShareOfVoice, analyzeOffsiteQualitative, checkAllEngines, LLMCheckResult, detectIndustry, generateAuditReport, AuditReportData } from '@/app/actions'
+import { SERVICE_LIMITS, AuditType, AIEngine } from '@/lib/service-limits'
 import { Switch } from '@/components/ui/switch'
 import { HelpTooltip } from '@/components/evs/help-tooltip'
 import { EVSEvolution } from '@/components/evs/evs-evolution'
@@ -290,7 +291,10 @@ export default function ClientDetailPage() {
                 industryData.productos
             );
 
-            const newQueries: QueryUI[] = suggestions.map(q => ({
+            // Get limit for current audit type
+            const maxQueries = SERVICE_LIMITS[auditType].maxQueries;
+
+            const newQueries: QueryUI[] = suggestions.slice(0, maxQueries).map(q => ({
                 query_text: q,
                 engine: 'ChatGPT', // Default
                 mentioned: false,
@@ -300,7 +304,9 @@ export default function ClientDetailPage() {
             setOffsiteQueries(prev => {
                 const existingTexts = new Set(prev.map(p => p.query_text));
                 const uniqueNew = newQueries.filter(n => !existingTexts.has(n.query_text));
-                return [...prev, ...uniqueNew];
+                // Also respect limit when adding to existing queries
+                const combined = [...prev, ...uniqueNew];
+                return combined.slice(0, maxQueries);
             });
 
             // 3. Run Qualitative Analysis (Auto-fill)
@@ -1163,8 +1169,8 @@ export default function ClientDetailPage() {
                                 </div>
                             </div>
 
-                            {/* Gap Analysis */}
-                            {reportData.gaps.length > 0 && (
+                            {/* Gap Analysis - Only show for Full/Retainer */}
+                            {SERVICE_LIMITS[auditType].includeGapAnalysis && reportData.gaps.length > 0 && (
                                 <div className="mb-6">
                                     <h3 className="text-lg font-semibold mb-2">🔍 Gap Analysis</h3>
                                     <div className="space-y-2">
@@ -1180,11 +1186,11 @@ export default function ClientDetailPage() {
                                 </div>
                             )}
 
-                            {/* Recommendations */}
+                            {/* Recommendations - Limited by audit type */}
                             <div className="mb-6">
-                                <h3 className="text-lg font-semibold mb-2">🎯 Top 5 Recomendaciones</h3>
+                                <h3 className="text-lg font-semibold mb-2">🎯 Top {SERVICE_LIMITS[auditType].recommendations} Recomendaciones</h3>
                                 <div className="space-y-4">
-                                    {reportData.recommendations.map((rec, i) => (
+                                    {reportData.recommendations.slice(0, SERVICE_LIMITS[auditType].recommendations).map((rec, i) => (
                                         <div key={i} className="p-4 border rounded-lg">
                                             <div className="flex items-start gap-2">
                                                 <span className="text-2xl">{rec.emoji}</span>

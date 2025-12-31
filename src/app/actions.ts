@@ -38,39 +38,12 @@ const perplexityClient = process.env.PERPLEXITY_API_KEY
     })
     : null;
 
-// Service Type Limits
+// Type definitions (local to avoid 'use server' export restrictions)
 export type AuditType = 'mini' | 'full' | 'retainer';
-
-export const SERVICE_LIMITS = {
-    mini: {
-        maxQueries: 5,
-        engines: ['ChatGPT', 'Gemini'] as AIEngine[],
-        recommendations: 3,
-        includeMethodology: false,
-        includeQueryDetail: false,
-        includeGapAnalysis: false
-    },
-    full: {
-        maxQueries: 20,
-        engines: ['ChatGPT', 'Claude', 'Gemini', 'Perplexity'] as AIEngine[],
-        recommendations: 5,
-        includeMethodology: true,
-        includeQueryDetail: true,
-        includeGapAnalysis: true
-    },
-    retainer: {
-        maxQueries: 15,
-        engines: ['ChatGPT', 'Claude', 'Gemini', 'Perplexity'] as AIEngine[],
-        recommendations: 5,
-        includeMethodology: true,
-        includeQueryDetail: true,
-        includeGapAnalysis: true,
-        includeDeltaComparison: true
-    }
-} as const;
-
-// Engine Type
 export type AIEngine = 'ChatGPT' | 'Claude' | 'Gemini' | 'Perplexity';
+
+// Import SERVICE_LIMITS from separate file (constants ok from client components)
+import { SERVICE_LIMITS } from '@/lib/service-limits';
 
 // Result Interface
 export interface LLMCheckResult {
@@ -798,8 +771,11 @@ export async function generateAuditReport(
     auditType: AuditType = 'full'
 ): Promise<{ success: boolean; report?: AuditReportData; markdown?: string; error?: string }> {
 
+    console.log('[generateAuditReport] auditType received:', auditType);
+
     // Get service limits for this audit type
     const limits = SERVICE_LIMITS[auditType];
+    console.log('[generateAuditReport] limits for', auditType, ':', JSON.stringify(limits));
 
     // Import supabase dynamically to avoid circular deps
     const { createClient } = await import('@supabase/supabase-js');
