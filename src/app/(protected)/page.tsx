@@ -4,7 +4,7 @@ import { useEffect, useState } from 'react'
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
 import { supabase } from '@/lib/supabase'
 import { Client, Audit } from '@/types/database'
-import { Users, Activity, CalendarDays, TrendingUp, TrendingDown, Minus } from 'lucide-react'
+import { Users, Activity, CalendarDays, TrendingUp, TrendingDown, Minus, LogOut } from 'lucide-react'
 import {
   BarChart,
   Bar,
@@ -19,6 +19,8 @@ import { useRouter } from 'next/navigation'
 import { Loader2 } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
 import { Separator } from '@/components/ui/separator'
+import { Button } from '@/components/ui/button'
+import { logout } from '@/app/login/actions'
 
 // Helper Types
 type ClientWithLatestAudit = Client & {
@@ -154,12 +156,22 @@ export default function DashboardPage() {
           <h1 className="text-4xl font-bold tracking-tight">Torre de Control</h1>
           <p className="text-muted-foreground mt-1">Resumen ejecutivo del performance de la cartera.</p>
         </div>
-        <button
-          onClick={() => router.push('/clients')}
-          className="inline-flex items-center justify-center rounded-md text-sm font-medium ring-offset-background transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50 bg-primary text-primary-foreground hover:bg-primary/90 h-10 px-4 py-2"
-        >
-          <Users className="mr-2 h-4 w-4" /> Gestionar Clientes
-        </button>
+        <div className="flex gap-2">
+          <button
+            onClick={() => router.push('/clients')}
+            className="inline-flex items-center justify-center rounded-md text-sm font-medium ring-offset-background transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50 bg-primary text-primary-foreground hover:bg-primary/90 h-10 px-4 py-2"
+          >
+            <Users className="mr-2 h-4 w-4" /> Gestionar Clientes
+          </button>
+          <Button
+            variant="outline"
+            size="icon"
+            onClick={() => logout()}
+            title="Cerrar sesión"
+          >
+            <LogOut className="h-4 w-4" />
+          </Button>
+        </div>
       </div>
 
       <Separator />
