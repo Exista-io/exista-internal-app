@@ -38,6 +38,37 @@ const perplexityClient = process.env.PERPLEXITY_API_KEY
     })
     : null;
 
+// Service Type Limits
+export type AuditType = 'mini' | 'full' | 'retainer';
+
+export const SERVICE_LIMITS = {
+    mini: {
+        maxQueries: 5,
+        engines: ['ChatGPT', 'Gemini'] as AIEngine[],
+        recommendations: 3,
+        includeMethodology: false,
+        includeQueryDetail: false,
+        includeGapAnalysis: false
+    },
+    full: {
+        maxQueries: 20,
+        engines: ['ChatGPT', 'Claude', 'Gemini', 'Perplexity'] as AIEngine[],
+        recommendations: 5,
+        includeMethodology: true,
+        includeQueryDetail: true,
+        includeGapAnalysis: true
+    },
+    retainer: {
+        maxQueries: 15,
+        engines: ['ChatGPT', 'Claude', 'Gemini', 'Perplexity'] as AIEngine[],
+        recommendations: 5,
+        includeMethodology: true,
+        includeQueryDetail: true,
+        includeGapAnalysis: true,
+        includeDeltaComparison: true
+    }
+} as const;
+
 // Engine Type
 export type AIEngine = 'ChatGPT' | 'Claude' | 'Gemini' | 'Perplexity';
 
@@ -638,9 +669,11 @@ export async function checkLLMAnswer(
 export async function checkAllEngines(
     query: string,
     brand: string,
-    competitors: string[] = []
+    competitors: string[] = [],
+    allowedEngines?: AIEngine[]
 ): Promise<LLMCheckResult[]> {
-    const engines: AIEngine[] = ['ChatGPT', 'Claude', 'Gemini', 'Perplexity'];
+    // Use filtered engines if provided, otherwise all 4
+    const engines: AIEngine[] = allowedEngines || ['ChatGPT', 'Claude', 'Gemini', 'Perplexity'];
 
     const results = await Promise.allSettled(
         engines.map(engine => checkLLMAnswer(query, engine, brand, competitors))
@@ -761,8 +794,12 @@ export async function generateAuditReport(
     auditId: string,
     clientId: string,
     clientName: string,
-    competidores: string[]
+    competidores: string[],
+    auditType: AuditType = 'full'
 ): Promise<{ success: boolean; report?: AuditReportData; markdown?: string; error?: string }> {
+
+    // Get service limits for this audit type
+    const limits = SERVICE_LIMITS[auditType];
 
     // Import supabase dynamically to avoid circular deps
     const { createClient } = await import('@supabase/supabase-js');
@@ -1029,7 +1066,7 @@ Sé directo y profesional. En español argentino.
         };
 
         // 12. Generate Markdown report
-        const markdown = generateReportMarkdown(reportData, clientName);
+        const markdown = generateReportMarkdown(reportData, clientName, auditType);
 
         return { success: true, report: reportData, markdown };
 
@@ -1045,8 +1082,12 @@ Sé directo y profesional. En español argentino.
 /**
  * Helper: Generate Markdown report from data
  */
-function generateReportMarkdown(data: AuditReportData, clientName: string): string {
+function generateReportMarkdown(data: AuditReportData, clientName: string, auditType: AuditType = 'full'): string {
     const be = data.benchmark.brand_engines;
+    const limits = SERVICE_LIMITS[auditType];
+
+    // Limit recommendations based on audit type
+    const recommendations = data.recommendations.slice(0, limits.recommendations);
 
     return `# Reporte EVS: ${clientName}
 
@@ -1066,18 +1107,18 @@ ${data.top3_hallazgos.map((h, i) => `${i + 1}. ${h}`).join('\n')}
 
 ## 📊 Benchmark Competitivo
 
-| Marca | SoV | ChatGPT | Claude | Gemini | Perplexity |
-|:---|:---:|:---:|:---:|:---:|:---:|
-| **${data.benchmark.brand}** | **${data.benchmark.brand_sov}%** | ${be.chatgpt ? '✅' : '❌'} | ${be.claude ? '✅' : '❌'} | ${be.gemini ? '✅' : '❌'} | ${be.perplexity ? '✅' : '❌'} |
+| Marca | SoV | ChatGPT | ${limits.engines.includes('Claude') ? 'Claude |' : ''} Gemini | ${limits.engines.includes('Perplexity') ? 'Perplexity |' : ''}
+|:---|:---:|:---:|${limits.engines.includes('Claude') ? ':---:|' : ''}:---:|${limits.engines.includes('Perplexity') ? ':---:|' : ''}
+| **${data.benchmark.brand}** | **${data.benchmark.brand_sov}%** | ${be.chatgpt ? '✅' : '❌'} | ${limits.engines.includes('Claude') ? `${be.claude ? '✅' : '❌'} |` : ''} ${be.gemini ? '✅' : '❌'} | ${limits.engines.includes('Perplexity') ? `${be.perplexity ? '✅' : '❌'} |` : ''}
 ${data.benchmark.competitors.map(c =>
-        `| ${c.name} | ${c.sov}% | ${c.engines.chatgpt ? '✅' : '❌'} | ${c.engines.claude ? '✅' : '❌'} | ${c.engines.gemini ? '✅' : '❌'} | ${c.engines.perplexity ? '✅' : '❌'} |`
+        `| ${c.name} | ${c.sov}% | ${c.engines.chatgpt ? '✅' : '❌'} | ${limits.engines.includes('Claude') ? `${c.engines.claude ? '✅' : '❌'} |` : ''} ${c.engines.gemini ? '✅' : '❌'} | ${limits.engines.includes('Perplexity') ? `${c.engines.perplexity ? '✅' : '❌'} |` : ''}`
     ).join('\n')}
 
 > **Nota:** El SoV (Share of Voice) indica el % de queries en las que cada marca fue mencionada por los motores de IA.
 
 ---
 
-## 🔍 Gap Analysis
+${limits.includeGapAnalysis ? `## 🔍 Gap Analysis
 
 ${data.gaps.length > 0 ? data.gaps.slice(0, 5).map(g =>
         `- **"${g.query}"** (${g.engine})\n  - ❌ ${clientName}: No aparece\n  - ✅ Competidores: ${g.competitors_found.join(', ')}`
@@ -1085,9 +1126,9 @@ ${data.gaps.length > 0 ? data.gaps.slice(0, 5).map(g =>
 
 ---
 
-## 🎯 Top 5 Recomendaciones
+` : ''}## 🎯 Top ${recommendations.length} Recomendaciones
 
-${data.recommendations.map(r =>
+${recommendations.map(r =>
         `### ${r.emoji} ${r.priority}. ${r.title}\n\n${r.description}\n\n**Impacto:** ${r.impact.charAt(0).toUpperCase() + r.impact.slice(1)} | **Dificultad:** ${r.difficulty.charAt(0).toUpperCase() + r.difficulty.slice(1)} | **Tiempo:** ${r.estimated_time}`
     ).join('\n\n---\n\n')}
 
@@ -1101,23 +1142,22 @@ ${data.recommendations.map(r =>
 | Structure | ${data.onsite_evidence.structure.score}/10 | ${data.onsite_evidence.structure.evidence.substring(0, 150)}... |
 | Authority | ${data.onsite_evidence.authority.score}/10 | ${data.onsite_evidence.authority.evidence.substring(0, 150)}... |
 
----
+${limits.includeQueryDetail && data.queries_detail && data.queries_detail.length > 0 ? `---
 
 ## 🔎 Detalle por Query
 
-${data.queries_detail && data.queries_detail.length > 0 ? `
-| Query | ChatGPT | Claude | Gemini | Perplexity |
-|:---|:---:|:---:|:---:|:---:|
+| Query | ChatGPT | ${limits.engines.includes('Claude') ? 'Claude |' : ''} Gemini | ${limits.engines.includes('Perplexity') ? 'Perplexity |' : ''}
+|:---|:---:|${limits.engines.includes('Claude') ? ':---:|' : ''}:---:|${limits.engines.includes('Perplexity') ? ':---:|' : ''}
 ${data.queries_detail.map(q => {
         const formatEngine = (e: { mentioned: boolean; bucket: string }) =>
             e.mentioned ? `✅ ${e.bucket}` : '❌';
-        return `| ${q.query.length > 50 ? q.query.substring(0, 47) + '...' : q.query} | ${formatEngine(q.engines.chatgpt)} | ${formatEngine(q.engines.claude)} | ${formatEngine(q.engines.gemini)} | ${formatEngine(q.engines.perplexity)} |`;
+        return `| ${q.query.length > 50 ? q.query.substring(0, 47) + '...' : q.query} | ${formatEngine(q.engines.chatgpt)} | ${limits.engines.includes('Claude') ? `${formatEngine(q.engines.claude)} |` : ''} ${formatEngine(q.engines.gemini)} | ${limits.engines.includes('Perplexity') ? `${formatEngine(q.engines.perplexity)} |` : ''}`;
     }).join('\n')}
 
 > **Leyenda:** ✅ = Mencionado | ❌ = No aparece | Bucket = Top Answer, Mentioned, Cited
-` : '_No hay queries detalladas disponibles._'}
+` : ''}
 
----
+${limits.includeMethodology ? `---
 
 ## 📖 Metodología EVS
 
@@ -1160,12 +1200,12 @@ Tu marca como entidad confiable:
 | **Money Queries** | Consultas con intención comercial ("mejores", "alternativas", "precio") |
 | **Bucket** | Clasificación de mención: Top Answer, Mentioned, Cited, Not Found |
 | **E-E-A-T** | Experience, Expertise, Authoritativeness, Trustworthiness |
-
+` : ''}
 ---
 
 *Generado por **Exista.io** EVS v3.0 el ${new Date(data.generated_at).toLocaleDateString('es-AR')}*
 
-*Metodología basada en Exista Visibility Score v1.0 - Argentina (AR)*
+*Tipo de auditoría: ${auditType.toUpperCase()}*
 
 ---
 

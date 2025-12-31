@@ -18,7 +18,7 @@ import { Separator } from '@/components/ui/separator'
 import { Badge } from '@/components/ui/badge'
 import { Plus, Trash2, ArrowLeft, Save, Loader2, Sparkles, Bot, FileText, Download, X } from 'lucide-react'
 import { toast } from 'sonner'
-import { analyzeQuery, scanWebsite, suggestQueries, checkShareOfVoice, analyzeOffsiteQualitative, checkAllEngines, LLMCheckResult, AIEngine, detectIndustry, generateAuditReport, AuditReportData } from '@/app/actions'
+import { analyzeQuery, scanWebsite, suggestQueries, checkShareOfVoice, analyzeOffsiteQualitative, checkAllEngines, LLMCheckResult, AIEngine, detectIndustry, generateAuditReport, AuditReportData, SERVICE_LIMITS, AuditType } from '@/app/actions'
 import { Switch } from '@/components/ui/switch'
 import { HelpTooltip } from '@/components/evs/help-tooltip'
 import { EVSEvolution } from '@/components/evs/evs-evolution'
@@ -129,6 +129,13 @@ export default function ClientDetailPage() {
     }
 
     const handleAddQuery = () => {
+        // Check if we've reached the limit for this audit type
+        const maxQueries = SERVICE_LIMITS[auditType].maxQueries;
+        if (offsiteQueries.length >= maxQueries) {
+            toast.warning(`Límite alcanzado: ${auditType} permite máximo ${maxQueries} queries`);
+            return;
+        }
+
         setOffsiteQueries([
             ...offsiteQueries,
             { id: Math.random().toString(36), query_text: '', engine: 'ChatGPT', mentioned: false, status: 'pending' }
@@ -198,8 +205,16 @@ export default function ClientDetailPage() {
 
         setAnalyzingIndex(index)
         try {
-            // EVS v2.0: Query all 4 engines in parallel
-            const results = await checkAllEngines(query.query_text, client.nombre, client.competidores || [])
+            // Get allowed engines for current audit type
+            const allowedEngines = SERVICE_LIMITS[auditType].engines;
+
+            // EVS v2.0: Query only allowed engines in parallel
+            const results = await checkAllEngines(
+                query.query_text,
+                client.nombre,
+                client.competidores || [],
+                [...allowedEngines] // Pass as mutable array
+            )
 
             // Check if ANY engine found the brand
             const anyMentioned = results.some(r => r.is_mentioned)
@@ -224,14 +239,15 @@ export default function ClientDetailPage() {
                     sentiment: bestResult.sentiment,
                     engineResults: results,
                     raw_response: bestResult.raw_response?.substring(0, 500) + '...',
-                    competitors_mentioned: allCompetitorsMentioned // NEW: Save competitors from all engines
+                    competitors_mentioned: allCompetitorsMentioned
                 }
                 return newQueries
             })
 
-            // Log all engine results
-            console.log('EVS v2.0 Multi-Engine Results:', results.map(r => `${r.engine}: ${r.bucket}`))
-            toast.success(`Revisado en 4 motores: ${results.filter(r => r.is_mentioned).length}/4 detectaron la marca`)
+            // Log engine results
+            const engineCount = allowedEngines.length;
+            console.log(`EVS ${auditType}: ${engineCount}-Engine Results:`, results.map(r => `${r.engine}: ${r.bucket}`))
+            toast.success(`Revisado en ${engineCount} motores: ${results.filter(r => r.is_mentioned).length}/${engineCount} detectaron la marca`)
         } catch (error) {
             console.error('Multi-Engine Check failed:', error)
             toast.error('Error al consultar los motores de IA')
@@ -507,7 +523,8 @@ export default function ClientDetailPage() {
                 lastAudit.id,
                 client.id,
                 client.nombre,
-                client.competidores || []
+                client.competidores || [],
+                auditType
             )
 
             if (result.success && result.report && result.markdown) {
