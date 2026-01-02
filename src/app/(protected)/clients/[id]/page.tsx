@@ -16,9 +16,9 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Separator } from '@/components/ui/separator'
 import { Badge } from '@/components/ui/badge'
-import { Plus, Trash2, ArrowLeft, Save, Loader2, Sparkles, Bot, FileText, Download, X, Eye, Archive } from 'lucide-react'
+import { Plus, Trash2, ArrowLeft, Save, Loader2, Sparkles, Bot, FileText, Download, X, Eye, Archive, ListChecks, CheckCircle2, Clock, AlertCircle } from 'lucide-react'
 import { toast } from 'sonner'
-import { analyzeQuery, scanWebsite, suggestQueries, checkShareOfVoice, analyzeOffsiteQualitative, checkAllEngines, LLMCheckResult, detectIndustry, generateAuditReport, AuditReportData, archiveAudit, getAuditDetails } from '@/app/actions'
+import { analyzeQuery, scanWebsite, suggestQueries, checkShareOfVoice, analyzeOffsiteQualitative, checkAllEngines, LLMCheckResult, detectIndustry, generateAuditReport, AuditReportData, archiveAudit, getAuditDetails, createAction, updateActionStatus, getActionsForClient, updateActionDetails, Action } from '@/app/actions'
 import { SERVICE_LIMITS, AuditType, AIEngine } from '@/lib/service-limits'
 import { Switch } from '@/components/ui/switch'
 import { HelpTooltip } from '@/components/evs/help-tooltip'
@@ -70,6 +70,15 @@ export default function ClientDetailPage() {
     const [showArchiveConfirm, setShowArchiveConfirm] = useState(false)
     const [auditToArchive, setAuditToArchive] = useState<string | null>(null)
     const [archiving, setArchiving] = useState(false)
+
+    // Action Tracker State
+    const [clientActions, setClientActions] = useState<Action[]>([])
+    const [loadingActions, setLoadingActions] = useState(false)
+    const [showActionsPanel, setShowActionsPanel] = useState(false)
+    const [creatingAction, setCreatingAction] = useState(false)
+    const [selectedActionForEdit, setSelectedActionForEdit] = useState<Action | null>(null)
+    const [showActionEditModal, setShowActionEditModal] = useState(false)
+    const [savingActionEdit, setSavingActionEdit] = useState(false)
 
     const [scanning, setScanning] = useState(false)
     const [auditType, setAuditType] = useState<'mini' | 'full' | 'retainer'>('full')
@@ -125,6 +134,8 @@ export default function ClientDetailPage() {
         } else {
             console.log("Client fetched", clientData)
             setClient(clientData)
+            // Also fetch actions for this client
+            fetchClientActions(id)
         }
 
         // Fetch All Audits for history display
@@ -140,6 +151,21 @@ export default function ClientDetailPage() {
         }
 
         setLoading(false)
+    }
+
+    // Fetch actions for displaying in Actions Card
+    const fetchClientActions = async (clientId: string) => {
+        setLoadingActions(true)
+        try {
+            const result = await getActionsForClient(clientId)
+            if (result.success && result.actions) {
+                setClientActions(result.actions)
+            }
+        } catch (e) {
+            console.error('Error fetching actions:', e)
+        } finally {
+            setLoadingActions(false)
+        }
     }
 
     const handleAddQuery = () => {
@@ -629,6 +655,31 @@ export default function ClientDetailPage() {
             setArchiving(false)
             setShowArchiveConfirm(false)
             setAuditToArchive(null)
+        }
+    }
+
+    // Handle Action status change (cycle through states)
+    const handleActionStatusChange = async (actionId: string, currentStatus: string) => {
+        const statusOrder: Array<'pending' | 'in_progress' | 'done' | 'blocked'> = ['pending', 'in_progress', 'done']
+        const currentIndex = statusOrder.indexOf(currentStatus as 'pending' | 'in_progress' | 'done')
+        const nextStatus = statusOrder[(currentIndex + 1) % statusOrder.length]
+
+        try {
+            const result = await updateActionStatus(actionId, nextStatus)
+            if (result.success) {
+                // Update local state
+                setClientActions(prev => prev.map(a =>
+                    a.id === actionId
+                        ? { ...a, status: nextStatus, completed_at: nextStatus === 'done' ? new Date().toISOString() : undefined }
+                        : a
+                ))
+                toast.success(`Estado actualizado a ${nextStatus === 'pending' ? 'Pendiente' : nextStatus === 'in_progress' ? 'En Progreso' : 'Completado'}`)
+            } else {
+                toast.error(result.error || 'Error al actualizar estado')
+            }
+        } catch (e) {
+            console.error('Update action status error:', e)
+            toast.error('Error al actualizar estado')
         }
     }
 
@@ -1156,6 +1207,155 @@ export default function ClientDetailPage() {
                         </CardContent>
                     </Card>
 
+                    {/* Actions Tracker Card */}
+                    <Card>
+                        <CardHeader className="pb-3">
+                            <div className="flex items-center justify-between">
+                                <div>
+                                    <CardTitle className="text-base flex items-center gap-2">
+                                        <ListChecks className="h-4 w-4" />
+                                        Acciones Pendientes
+                                    </CardTitle>
+                                    <CardDescription className="text-xs">
+                                        {clientActions.filter(a => a.status !== 'done').length} pendientes | {clientActions.filter(a => a.status === 'done').length} completadas
+                                    </CardDescription>
+                                </div>
+                                <div className="flex gap-1">
+                                    {clientActions.length > 0 && (
+                                        <Button
+                                            variant="ghost"
+                                            size="sm"
+                                            className="h-8 w-8 p-0"
+                                            title="Exportar acciones CSV"
+                                            onClick={() => {
+                                                const headers = ['Prioridad', 'Título', 'Descripción', 'Impacto', 'Dificultad', 'Tiempo Est.', 'Estado', 'Asignado', 'Fecha Límite', 'Notas'];
+                                                const rows = clientActions.map(a => [
+                                                    a.priority,
+                                                    `"${a.title.replace(/"/g, '""')}"`,
+                                                    `"${a.description.replace(/"/g, '""')}"`,
+                                                    a.impact,
+                                                    a.difficulty,
+                                                    a.estimated_time,
+                                                    a.status === 'pending' ? 'Pendiente' : a.status === 'in_progress' ? 'En Progreso' : a.status === 'done' ? 'Completado' : 'Bloqueado',
+                                                    a.assigned_to || '',
+                                                    a.due_date ? new Date(a.due_date).toLocaleDateString('es-AR') : '',
+                                                    `"${(a.notes || '').replace(/"/g, '""')}"`
+                                                ]);
+                                                const csvContent = '\uFEFF' + [headers.join(','), ...rows.map(r => r.join(','))].join('\n');
+                                                const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8' });
+                                                const url = URL.createObjectURL(blob);
+                                                const a = document.createElement('a');
+                                                a.href = url;
+                                                a.download = `acciones-${client?.nombre || 'cliente'}-${new Date().toISOString().split('T')[0]}.csv`;
+                                                a.click();
+                                                URL.revokeObjectURL(url);
+                                                toast.success('Acciones exportadas');
+                                            }}
+                                        >
+                                            <Download className="h-4 w-4" />
+                                        </Button>
+                                    )}
+                                    {clientActions.length > 3 && (
+                                        <Button
+                                            variant="ghost"
+                                            size="sm"
+                                            onClick={() => setShowActionsPanel(!showActionsPanel)}
+                                        >
+                                            {showActionsPanel ? 'Menos' : 'Ver todas'}
+                                        </Button>
+                                    )}
+                                </div>
+                            </div>
+                        </CardHeader>
+                        <CardContent className={`space-y-2 ${showActionsPanel ? 'max-h-96' : 'max-h-48'} overflow-y-auto`}>
+                            {loadingActions ? (
+                                <div className="flex justify-center py-4">
+                                    <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+                                </div>
+                            ) : clientActions.length > 0 ? (
+                                <>
+                                    {clientActions
+                                        .filter(a => a.status !== 'done' || showActionsPanel)
+                                        .slice(0, showActionsPanel ? undefined : 5)
+                                        .map((action) => (
+                                            <div
+                                                key={action.id}
+                                                className={`flex items-start justify-between p-2 rounded border ${action.status === 'done'
+                                                    ? 'bg-green-50 dark:bg-green-950/20 border-green-200 dark:border-green-900'
+                                                    : action.status === 'in_progress'
+                                                        ? 'bg-blue-50 dark:bg-blue-950/20 border-blue-200 dark:border-blue-900'
+                                                        : action.status === 'blocked'
+                                                            ? 'bg-red-50 dark:bg-red-950/20 border-red-200 dark:border-red-900'
+                                                            : 'bg-muted/50'
+                                                    }`}
+                                            >
+                                                <div
+                                                    className="flex-1 min-w-0 cursor-pointer"
+                                                    onClick={() => {
+                                                        setSelectedActionForEdit(action)
+                                                        setShowActionEditModal(true)
+                                                    }}
+                                                >
+                                                    <div className="flex items-center gap-1.5">
+                                                        <span>{action.emoji}</span>
+                                                        <Badge variant="outline" className="text-[10px] shrink-0">
+                                                            P{action.priority}
+                                                        </Badge>
+                                                        <span className="font-medium text-sm truncate hover:underline">{action.title}</span>
+                                                    </div>
+                                                    <div className="text-xs text-muted-foreground mt-0.5 truncate">
+                                                        {action.description.substring(0, 60)}...
+                                                    </div>
+                                                    {(action.due_date || action.assigned_to) && (
+                                                        <div className="text-[10px] text-muted-foreground flex items-center gap-2 mt-1">
+                                                            {action.due_date && (
+                                                                <span className="flex items-center gap-1">
+                                                                    <Clock className="h-3 w-3" />
+                                                                    {new Date(action.due_date).toLocaleDateString('es-AR')}
+                                                                </span>
+                                                            )}
+                                                            {action.assigned_to && (
+                                                                <span>👤 {action.assigned_to}</span>
+                                                            )}
+                                                        </div>
+                                                    )}
+                                                </div>
+                                                <Button
+                                                    variant="ghost"
+                                                    size="sm"
+                                                    className="h-7 px-2 shrink-0"
+                                                    onClick={() => handleActionStatusChange(action.id, action.status)}
+                                                    title="Cambiar estado"
+                                                >
+                                                    {action.status === 'pending' && (
+                                                        <span className="text-xs text-muted-foreground">⬜ Pendiente</span>
+                                                    )}
+                                                    {action.status === 'in_progress' && (
+                                                        <span className="text-xs text-blue-600">🔄 En progreso</span>
+                                                    )}
+                                                    {action.status === 'done' && (
+                                                        <span className="text-xs text-green-600 flex items-center gap-1">
+                                                            <CheckCircle2 className="h-3 w-3" /> Hecho
+                                                        </span>
+                                                    )}
+                                                    {action.status === 'blocked' && (
+                                                        <span className="text-xs text-red-600 flex items-center gap-1">
+                                                            <AlertCircle className="h-3 w-3" /> Bloqueado
+                                                        </span>
+                                                    )}
+                                                </Button>
+                                            </div>
+                                        ))
+                                    }
+                                </>
+                            ) : (
+                                <p className="text-sm text-muted-foreground text-center py-4">
+                                    Sin acciones. Generá un reporte para crear acciones.
+                                </p>
+                            )}
+                        </CardContent>
+                    </Card>
+
                     {/* EVS Evolution Chart */}
                     <EVSEvolution audits={allAudits} />
 
@@ -1289,7 +1489,7 @@ export default function ClientDetailPage() {
                                                 <div className="flex-1">
                                                     <h4 className="font-semibold">{rec.priority}. {rec.title}</h4>
                                                     <p className="text-sm text-muted-foreground mt-1">{rec.description}</p>
-                                                    <div className="flex gap-4 mt-2 text-xs">
+                                                    <div className="flex gap-4 mt-2 text-xs items-center">
                                                         <Badge variant={rec.impact === 'alto' ? 'default' : 'secondary'}>
                                                             Impacto: {rec.impact}
                                                         </Badge>
@@ -1297,6 +1497,45 @@ export default function ClientDetailPage() {
                                                             Dificultad: {rec.difficulty}
                                                         </Badge>
                                                         <span className="text-muted-foreground">⏱️ {rec.estimated_time}</span>
+                                                        <Button
+                                                            variant="ghost"
+                                                            size="sm"
+                                                            className="h-6 px-2 text-xs ml-auto"
+                                                            disabled={creatingAction || clientActions.some(a => a.title === rec.title)}
+                                                            onClick={async () => {
+                                                                if (!client?.id || !lastAudit?.id) return
+                                                                setCreatingAction(true)
+                                                                try {
+                                                                    const result = await createAction({
+                                                                        auditId: lastAudit.id,
+                                                                        clientId: client.id,
+                                                                        priority: rec.priority,
+                                                                        emoji: rec.emoji,
+                                                                        title: rec.title,
+                                                                        description: rec.description,
+                                                                        impact: rec.impact as 'alto' | 'medio' | 'bajo',
+                                                                        difficulty: rec.difficulty as 'facil' | 'media' | 'dificil',
+                                                                        estimatedTime: rec.estimated_time
+                                                                    })
+                                                                    if (result.success && result.action) {
+                                                                        setClientActions(prev => [...prev, result.action!])
+                                                                        toast.success(`Acción "${rec.title}" creada`)
+                                                                    } else {
+                                                                        toast.error(result.error || 'Error al crear acción')
+                                                                    }
+                                                                } catch (e) {
+                                                                    console.error('Create action error:', e)
+                                                                    toast.error('Error al crear acción')
+                                                                } finally {
+                                                                    setCreatingAction(false)
+                                                                }
+                                                            }}
+                                                        >
+                                                            {clientActions.some(a => a.title === rec.title)
+                                                                ? <><CheckCircle2 className="h-3 w-3 mr-1" /> Creada</>
+                                                                : <><Plus className="h-3 w-3 mr-1" /> Crear Acción</>
+                                                            }
+                                                        </Button>
                                                     </div>
                                                 </div>
                                             </div>
@@ -1668,6 +1907,125 @@ export default function ClientDetailPage() {
                                     Usar este tipo
                                 </Button>
                             </div>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {/* Action Edit Modal */}
+            {showActionEditModal && selectedActionForEdit && (
+                <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
+                    <div className="bg-background rounded-lg shadow-2xl max-w-md w-full p-6">
+                        <div className="flex items-center justify-between mb-4">
+                            <h3 className="text-lg font-semibold flex items-center gap-2">
+                                <span>{selectedActionForEdit.emoji}</span>
+                                Editar Acción
+                            </h3>
+                            <Button variant="ghost" size="sm" onClick={() => setShowActionEditModal(false)}>
+                                <X className="h-4 w-4" />
+                            </Button>
+                        </div>
+
+                        <div className="space-y-4">
+                            <div>
+                                <h4 className="font-medium">{selectedActionForEdit.title}</h4>
+                                <p className="text-sm text-muted-foreground">{selectedActionForEdit.description}</p>
+                            </div>
+
+                            <div className="grid grid-cols-2 gap-3">
+                                <div>
+                                    <Label className="text-xs">Estado</Label>
+                                    <Select
+                                        value={selectedActionForEdit.status}
+                                        onValueChange={(v) => setSelectedActionForEdit({ ...selectedActionForEdit, status: v as 'pending' | 'in_progress' | 'done' | 'blocked' })}
+                                    >
+                                        <SelectTrigger className="mt-1">
+                                            <SelectValue />
+                                        </SelectTrigger>
+                                        <SelectContent>
+                                            <SelectItem value="pending">⬜ Pendiente</SelectItem>
+                                            <SelectItem value="in_progress">🔄 En Progreso</SelectItem>
+                                            <SelectItem value="done">✅ Completado</SelectItem>
+                                            <SelectItem value="blocked">🚫 Bloqueado</SelectItem>
+                                        </SelectContent>
+                                    </Select>
+                                </div>
+                                <div>
+                                    <Label className="text-xs">Fecha Límite</Label>
+                                    <Input
+                                        type="date"
+                                        className="mt-1"
+                                        value={selectedActionForEdit.due_date?.split('T')[0] || ''}
+                                        onChange={(e) => setSelectedActionForEdit({ ...selectedActionForEdit, due_date: e.target.value })}
+                                    />
+                                </div>
+                            </div>
+
+                            <div>
+                                <Label className="text-xs">Asignado a</Label>
+                                <Input
+                                    className="mt-1"
+                                    placeholder="Nombre del responsable"
+                                    value={selectedActionForEdit.assigned_to || ''}
+                                    onChange={(e) => setSelectedActionForEdit({ ...selectedActionForEdit, assigned_to: e.target.value })}
+                                />
+                            </div>
+
+                            <div>
+                                <Label className="text-xs">Notas</Label>
+                                <textarea
+                                    className="mt-1 w-full min-h-[80px] rounded-md border border-input bg-background px-3 py-2 text-sm"
+                                    placeholder="Notas adicionales..."
+                                    value={selectedActionForEdit.notes || ''}
+                                    onChange={(e) => setSelectedActionForEdit({ ...selectedActionForEdit, notes: e.target.value })}
+                                />
+                            </div>
+                        </div>
+
+                        <div className="flex justify-end gap-2 mt-6">
+                            <Button variant="outline" onClick={() => setShowActionEditModal(false)}>
+                                Cancelar
+                            </Button>
+                            <Button
+                                disabled={savingActionEdit}
+                                onClick={async () => {
+                                    setSavingActionEdit(true)
+                                    try {
+                                        // Update status
+                                        const statusResult = await updateActionStatus(
+                                            selectedActionForEdit.id,
+                                            selectedActionForEdit.status,
+                                            selectedActionForEdit.notes
+                                        )
+
+                                        // Update details
+                                        const detailsResult = await updateActionDetails(selectedActionForEdit.id, {
+                                            assignedTo: selectedActionForEdit.assigned_to,
+                                            dueDate: selectedActionForEdit.due_date,
+                                            notes: selectedActionForEdit.notes
+                                        })
+
+                                        if (statusResult.success && detailsResult.success) {
+                                            // Update local state
+                                            setClientActions(prev => prev.map(a =>
+                                                a.id === selectedActionForEdit.id ? selectedActionForEdit : a
+                                            ))
+                                            toast.success('Acción actualizada')
+                                            setShowActionEditModal(false)
+                                        } else {
+                                            toast.error('Error al guardar cambios')
+                                        }
+                                    } catch (e) {
+                                        console.error('Save action error:', e)
+                                        toast.error('Error al guardar')
+                                    } finally {
+                                        setSavingActionEdit(false)
+                                    }
+                                }}
+                            >
+                                {savingActionEdit ? <Loader2 className="h-4 w-4 animate-spin mr-1" /> : <Save className="h-4 w-4 mr-1" />}
+                                Guardar
+                            </Button>
                         </div>
                     </div>
                 </div>

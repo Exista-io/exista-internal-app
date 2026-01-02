@@ -1342,3 +1342,210 @@ export async function getAuditDetails(auditId: string): Promise<{
         return { success: false, error: 'Error al obtener detalles de la auditoría' };
     }
 }
+
+
+// ============================================
+// PHASE 8.2: ACTION TRACKER
+// ============================================
+
+export interface Action {
+    id: string;
+    audit_id: string;
+    client_id: string;
+    priority: number;
+    emoji: string;
+    title: string;
+    description: string;
+    impact: 'alto' | 'medio' | 'bajo';
+    difficulty: 'facil' | 'media' | 'dificil';
+    estimated_time: string;
+    status: 'pending' | 'in_progress' | 'done' | 'blocked';
+    assigned_to?: string;
+    due_date?: string;
+    completed_at?: string;
+    notes?: string;
+    created_at: string;
+}
+
+/**
+ * Create a new action from a recommendation
+ */
+export async function createAction(data: {
+    auditId: string;
+    clientId: string;
+    priority: number;
+    emoji: string;
+    title: string;
+    description: string;
+    impact: 'alto' | 'medio' | 'bajo';
+    difficulty: 'facil' | 'media' | 'dificil';
+    estimatedTime: string;
+}): Promise<{ success: boolean; action?: Action; error?: string }> {
+    const { createClient } = await import('@supabase/supabase-js');
+    const supabase = createClient(
+        process.env.NEXT_PUBLIC_SUPABASE_URL!,
+        process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
+    );
+
+    try {
+        // Check for duplicate (same title + audit_id)
+        const { data: existing } = await supabase
+            .from('audit_actions')
+            .select('id')
+            .eq('audit_id', data.auditId)
+            .eq('title', data.title)
+            .single();
+
+        if (existing) {
+            return { success: false, error: 'Esta acción ya existe para esta auditoría' };
+        }
+
+        const { data: action, error } = await supabase
+            .from('audit_actions')
+            .insert({
+                audit_id: data.auditId,
+                client_id: data.clientId,
+                priority: data.priority,
+                emoji: data.emoji,
+                title: data.title,
+                description: data.description,
+                impact: data.impact,
+                difficulty: data.difficulty,
+                estimated_time: data.estimatedTime,
+                status: 'pending'
+            })
+            .select()
+            .single();
+
+        if (error) {
+            console.error('Create action error:', error);
+            return { success: false, error: error.message };
+        }
+
+        return { success: true, action: action as Action };
+    } catch (e) {
+        console.error('Create action exception:', e);
+        return { success: false, error: 'Error al crear la acción' };
+    }
+}
+
+/**
+ * Update action status with optional notes
+ */
+export async function updateActionStatus(
+    actionId: string,
+    status: 'pending' | 'in_progress' | 'done' | 'blocked',
+    notes?: string
+): Promise<{ success: boolean; error?: string }> {
+    const { createClient } = await import('@supabase/supabase-js');
+    const supabase = createClient(
+        process.env.NEXT_PUBLIC_SUPABASE_URL!,
+        process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
+    );
+
+    try {
+        const updateData: Record<string, unknown> = { status };
+
+        if (notes !== undefined) {
+            updateData.notes = notes;
+        }
+
+        // Set completed_at when status becomes 'done'
+        if (status === 'done') {
+            updateData.completed_at = new Date().toISOString();
+        } else {
+            updateData.completed_at = null;
+        }
+
+        const { error } = await supabase
+            .from('audit_actions')
+            .update(updateData)
+            .eq('id', actionId);
+
+        if (error) {
+            console.error('Update action status error:', error);
+            return { success: false, error: error.message };
+        }
+
+        return { success: true };
+    } catch (e) {
+        console.error('Update action status exception:', e);
+        return { success: false, error: 'Error al actualizar el estado' };
+    }
+}
+
+/**
+ * Get all actions for a client, ordered by priority and due_date
+ */
+export async function getActionsForClient(clientId: string): Promise<{
+    success: boolean;
+    actions?: Action[];
+    error?: string;
+}> {
+    const { createClient } = await import('@supabase/supabase-js');
+    const supabase = createClient(
+        process.env.NEXT_PUBLIC_SUPABASE_URL!,
+        process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
+    );
+
+    try {
+        const { data: actions, error } = await supabase
+            .from('audit_actions')
+            .select('*')
+            .eq('client_id', clientId)
+            .order('priority', { ascending: true })
+            .order('due_date', { ascending: true, nullsFirst: false })
+            .order('created_at', { ascending: false });
+
+        if (error) {
+            console.error('Get actions error:', error);
+            return { success: false, error: error.message };
+        }
+
+        return { success: true, actions: (actions || []) as Action[] };
+    } catch (e) {
+        console.error('Get actions exception:', e);
+        return { success: false, error: 'Error al obtener las acciones' };
+    }
+}
+
+/**
+ * Update action details (assigned_to, due_date, notes)
+ */
+export async function updateActionDetails(
+    actionId: string,
+    data: {
+        assignedTo?: string;
+        dueDate?: string;
+        notes?: string;
+    }
+): Promise<{ success: boolean; error?: string }> {
+    const { createClient } = await import('@supabase/supabase-js');
+    const supabase = createClient(
+        process.env.NEXT_PUBLIC_SUPABASE_URL!,
+        process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
+    );
+
+    try {
+        const updateData: Record<string, unknown> = {};
+
+        if (data.assignedTo !== undefined) updateData.assigned_to = data.assignedTo;
+        if (data.dueDate !== undefined) updateData.due_date = data.dueDate;
+        if (data.notes !== undefined) updateData.notes = data.notes;
+
+        const { error } = await supabase
+            .from('audit_actions')
+            .update(updateData)
+            .eq('id', actionId);
+
+        if (error) {
+            console.error('Update action details error:', error);
+            return { success: false, error: error.message };
+        }
+
+        return { success: true };
+    } catch (e) {
+        console.error('Update action details exception:', e);
+        return { success: false, error: 'Error al actualizar la acción' };
+    }
+}
