@@ -182,9 +182,16 @@ export async function scanWebsite(domain: string): Promise<ScanResult & {
         if (sitemapRes.status === 'fulfilled' && sitemapRes.value.ok) results.sitemap_ok = true;
         if (llmsRes.status === 'fulfilled' && llmsRes.value.ok) results.llms_txt_present = true;
 
-        // 2. Fetch HTML for Semantic Analysis
-        const homeRes = await fetch(url, { next: { revalidate: 0 } });
-        if (!homeRes.ok) throw new Error("Could not fetch homepage");
+        // 2. Fetch HTML for Semantic Analysis (with browser-like headers)
+        const homeRes = await fetch(url, {
+            next: { revalidate: 0 },
+            headers: {
+                'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+                'Accept-Language': 'es-AR,es;q=0.9,en;q=0.8'
+            }
+        });
+        if (!homeRes.ok) throw new Error(`Could not fetch homepage (HTTP ${homeRes.status})`);
 
         const html = await homeRes.text();
         const $ = cheerio.load(html);
@@ -1190,3 +1197,148 @@ Tu marca como entidad confiable:
 }
 
 
+// ============================================
+// PHASE 8: HISTORICAL AUDITS + ARCHIVE
+// ============================================
+
+/**
+ * Archive an audit (soft delete)
+ * The audit remains in DB but is hidden from UI
+ */
+export async function archiveAudit(auditId: string): Promise<{ success: boolean; error?: string }> {
+    const { createClient } = await import('@supabase/supabase-js');
+    const supabase = createClient(
+        process.env.NEXT_PUBLIC_SUPABASE_URL!,
+        process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
+    );
+
+    try {
+        const { error } = await supabase
+            .from('audits')
+            .update({
+                archived: true,
+                archived_at: new Date().toISOString()
+            })
+            .eq('id', auditId);
+
+        if (error) {
+            console.error('Archive audit error:', error);
+            return { success: false, error: error.message };
+        }
+
+        return { success: true };
+    } catch (e) {
+        console.error('Archive audit exception:', e);
+        return { success: false, error: 'Error al archivar la auditoría' };
+    }
+}
+
+/**
+ * Get full audit details including all queries and responses
+ */
+export async function getAuditDetails(auditId: string): Promise<{
+    success: boolean;
+    audit?: {
+        id: string;
+        fecha: string;
+        version: string;
+        type: string;
+        score_onsite: number;
+        score_offsite: number;
+        evs_score: number;
+        onsite_data: Record<string, unknown>;
+        offsite_data: Record<string, unknown>;
+    };
+    queries?: Array<{
+        id: string;
+        query_text: string;
+        engine: string;
+        raw_response: string;
+        is_mentioned: boolean;
+        bucket: string;
+        sentiment: string;
+        competitors_mentioned: string[];
+    }>;
+    error?: string;
+}> {
+    const { createClient } = await import('@supabase/supabase-js');
+    const supabase = createClient(
+        process.env.NEXT_PUBLIC_SUPABASE_URL!,
+        process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
+    );
+
+    try {
+        // Fetch audit data
+        const { data: audit, error: auditError } = await supabase
+            .from('audits')
+            .select('*')
+            .eq('id', auditId)
+            .single();
+
+        if (auditError || !audit) {
+            return { success: false, error: 'Auditoría no encontrada' };
+        }
+
+        // Fetch onsite_results for this audit
+        const { data: onsiteData, error: onsiteError } = await supabase
+            .from('onsite_results')
+            .select('*')
+            .eq('audit_id', auditId)
+            .single();
+
+        if (onsiteError) {
+            console.log('No onsite_results found:', onsiteError);
+        }
+
+        // Fetch offsite_results for this audit
+        const { data: offsiteData, error: offsiteError } = await supabase
+            .from('offsite_results')
+            .select('*')
+            .eq('audit_id', auditId)
+            .single();
+
+        if (offsiteError) {
+            console.log('No offsite_results found:', offsiteError);
+        }
+
+        // Fetch all queries for this audit
+        const { data: queries, error: queriesError } = await supabase
+            .from('offsite_queries')
+            .select('*')
+            .eq('audit_id', auditId)
+            .order('created_at', { ascending: true });
+
+        if (queriesError) {
+            console.error('Fetch queries error:', queriesError);
+        }
+
+        return {
+            success: true,
+            audit: {
+                id: audit.id,
+                fecha: audit.fecha,
+                version: audit.version,
+                type: audit.type || 'full',
+                score_onsite: audit.score_onsite || 0,
+                score_offsite: audit.score_offsite || 0,
+                evs_score: Math.round((audit.score_onsite || 0) + (audit.score_offsite || 0)),
+                // Use fetched onsite_results and offsite_results
+                onsite_data: onsiteData || {},
+                offsite_data: offsiteData || {}
+            },
+            queries: (queries || []).map(q => ({
+                id: q.id,
+                query_text: q.query_text,
+                engine: q.engine,
+                raw_response: q.raw_response || '',
+                is_mentioned: q.mentioned || false,
+                bucket: q.bucket || 'Not Found',
+                sentiment: q.sentiment || 'Neutral',
+                competitors_mentioned: q.competitors_mentioned || []
+            }))
+        };
+    } catch (e) {
+        console.error('Get audit details exception:', e);
+        return { success: false, error: 'Error al obtener detalles de la auditoría' };
+    }
+}

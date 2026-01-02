@@ -16,9 +16,9 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Separator } from '@/components/ui/separator'
 import { Badge } from '@/components/ui/badge'
-import { Plus, Trash2, ArrowLeft, Save, Loader2, Sparkles, Bot, FileText, Download, X } from 'lucide-react'
+import { Plus, Trash2, ArrowLeft, Save, Loader2, Sparkles, Bot, FileText, Download, X, Eye, Archive } from 'lucide-react'
 import { toast } from 'sonner'
-import { analyzeQuery, scanWebsite, suggestQueries, checkShareOfVoice, analyzeOffsiteQualitative, checkAllEngines, LLMCheckResult, detectIndustry, generateAuditReport, AuditReportData } from '@/app/actions'
+import { analyzeQuery, scanWebsite, suggestQueries, checkShareOfVoice, analyzeOffsiteQualitative, checkAllEngines, LLMCheckResult, detectIndustry, generateAuditReport, AuditReportData, archiveAudit, getAuditDetails } from '@/app/actions'
 import { SERVICE_LIMITS, AuditType, AIEngine } from '@/lib/service-limits'
 import { Switch } from '@/components/ui/switch'
 import { HelpTooltip } from '@/components/evs/help-tooltip'
@@ -57,6 +57,19 @@ export default function ClientDetailPage() {
     const [reportData, setReportData] = useState<AuditReportData | null>(null)
     const [reportMarkdown, setReportMarkdown] = useState<string>('')
     const [showReportModal, setShowReportModal] = useState(false)
+
+    // Historical Audit View State
+    const [showAuditDetailModal, setShowAuditDetailModal] = useState(false)
+    const [selectedAuditDetail, setSelectedAuditDetail] = useState<{
+        audit: { id: string; fecha: string; version: string; type: string; score_onsite: number; score_offsite: number; evs_score: number; onsite_data: Record<string, unknown>; offsite_data: Record<string, unknown> };
+        queries: Array<{ id: string; query_text: string; engine: string; raw_response: string; is_mentioned: boolean; bucket: string; sentiment: string; competitors_mentioned: string[] }>;
+    } | null>(null)
+    const [loadingAuditDetail, setLoadingAuditDetail] = useState(false)
+
+    // Archive Confirmation State
+    const [showArchiveConfirm, setShowArchiveConfirm] = useState(false)
+    const [auditToArchive, setAuditToArchive] = useState<string | null>(null)
+    const [archiving, setArchiving] = useState(false)
 
     const [scanning, setScanning] = useState(false)
     const [auditType, setAuditType] = useState<'mini' | 'full' | 'retainer'>('full')
@@ -461,6 +474,7 @@ export default function ClientDetailPage() {
                     position: string;
                     competitors_mentioned: string[];
                     sentiment: string;
+                    raw_response: string;
                 }> = [];
 
                 for (const q of validQueries) {
@@ -475,7 +489,8 @@ export default function ClientDetailPage() {
                                 bucket: engineResult.bucket,
                                 position: engineResult.is_mentioned ? 'top' : 'none',
                                 competitors_mentioned: engineResult.competitors_mentioned || [],
-                                sentiment: engineResult.sentiment || 'Neutral'
+                                sentiment: engineResult.sentiment || 'Neutral',
+                                raw_response: engineResult.raw_response || ''
                             });
                         }
                     } else {
@@ -488,7 +503,8 @@ export default function ClientDetailPage() {
                             bucket: q.mentioned ? 'Mentioned' : 'Not Found',
                             position: q.mentioned ? 'top' : 'none',
                             competitors_mentioned: q.competitors_mentioned || [],
-                            sentiment: q.sentiment || 'Neutral'
+                            sentiment: q.sentiment || 'Neutral',
+                            raw_response: ''
                         });
                     }
                 }
@@ -559,6 +575,61 @@ export default function ClientDetailPage() {
         a.download = `reporte-evs-${client.nombre.toLowerCase().replace(/\s+/g, '-')}-${new Date().toISOString().split('T')[0]}.md`
         a.click()
         URL.revokeObjectURL(url)
+    }
+
+    // ========== Historical Audit Handlers ==========
+    const handleViewAudit = async (auditId: string) => {
+        setLoadingAuditDetail(true)
+        try {
+            const result = await getAuditDetails(auditId)
+            if (result.success && result.audit && result.queries) {
+                setSelectedAuditDetail({
+                    audit: result.audit,
+                    queries: result.queries
+                })
+                setShowAuditDetailModal(true)
+            } else {
+                toast.error(result.error || 'Error al cargar los detalles')
+            }
+        } catch (e) {
+            console.error('View audit error:', e)
+            toast.error('Error al cargar la auditoría')
+        } finally {
+            setLoadingAuditDetail(false)
+        }
+    }
+
+    const handleArchiveConfirm = (auditId: string) => {
+        setAuditToArchive(auditId)
+        setShowArchiveConfirm(true)
+    }
+
+    const handleArchiveAudit = async () => {
+        if (!auditToArchive) return
+
+        setArchiving(true)
+        try {
+            const result = await archiveAudit(auditToArchive)
+            if (result.success) {
+                toast.success('Auditoría archivada')
+                // Remove from local state
+                setAllAudits(prev => prev.filter(a => a.id !== auditToArchive))
+                // If archived was the last audit, update lastAudit
+                if (lastAudit?.id === auditToArchive) {
+                    const remaining = allAudits.filter(a => a.id !== auditToArchive)
+                    setLastAudit(remaining.length > 0 ? remaining[0] : null)
+                }
+            } else {
+                toast.error(result.error || 'Error al archivar')
+            }
+        } catch (e) {
+            console.error('Archive audit error:', e)
+            toast.error('Error al archivar la auditoría')
+        } finally {
+            setArchiving(false)
+            setShowArchiveConfirm(false)
+            setAuditToArchive(null)
+        }
     }
 
     if (loading) {
@@ -1043,15 +1114,36 @@ export default function ClientDetailPage() {
                                                     })}
                                                 </div>
                                             </div>
-                                            <div className="text-right">
-                                                <div className={`text-lg font-bold ${(audit.score_total || 0) >= 60 ? 'text-green-600' :
-                                                    (audit.score_total || 0) >= 40 ? 'text-yellow-600' : 'text-red-600'
-                                                    }`}>
-                                                    {Math.round(audit.score_total || 0)}
+                                            <div className="flex items-center gap-2">
+                                                <div className="text-right mr-2">
+                                                    <div className={`text-lg font-bold ${(audit.score_total || 0) >= 60 ? 'text-green-600' :
+                                                        (audit.score_total || 0) >= 40 ? 'text-yellow-600' : 'text-red-600'
+                                                        }`}>
+                                                        {Math.round(audit.score_total || 0)}
+                                                    </div>
+                                                    <div className="text-[10px] text-muted-foreground">
+                                                        EVS Score
+                                                    </div>
                                                 </div>
-                                                <div className="text-[10px] text-muted-foreground">
-                                                    EVS Score
-                                                </div>
+                                                <Button
+                                                    variant="ghost"
+                                                    size="sm"
+                                                    className="h-8 w-8 p-0"
+                                                    onClick={() => handleViewAudit(audit.id)}
+                                                    disabled={loadingAuditDetail}
+                                                    title="Ver detalle"
+                                                >
+                                                    <Eye className="h-4 w-4" />
+                                                </Button>
+                                                <Button
+                                                    variant="ghost"
+                                                    size="sm"
+                                                    className="h-8 w-8 p-0 text-muted-foreground hover:text-destructive"
+                                                    onClick={() => handleArchiveConfirm(audit.id)}
+                                                    title="Archivar"
+                                                >
+                                                    <Archive className="h-4 w-4" />
+                                                </Button>
                                             </div>
                                         </div>
                                     ))}
@@ -1211,6 +1303,370 @@ export default function ClientDetailPage() {
                                         </div>
                                     ))}
                                 </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            )}
+            {/* Archive Confirmation Dialog */}
+            {showArchiveConfirm && (
+                <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
+                    <div className="bg-background rounded-lg shadow-2xl max-w-md w-full p-6">
+                        <h3 className="text-lg font-semibold mb-2">¿Archivar esta auditoría?</h3>
+                        <p className="text-sm text-muted-foreground mb-4">
+                            La auditoría se ocultará del historial pero los datos se conservarán en la base de datos.
+                        </p>
+                        <div className="flex justify-end gap-2">
+                            <Button
+                                variant="outline"
+                                onClick={() => { setShowArchiveConfirm(false); setAuditToArchive(null); }}
+                                disabled={archiving}
+                            >
+                                Cancelar
+                            </Button>
+                            <Button
+                                variant="destructive"
+                                onClick={handleArchiveAudit}
+                                disabled={archiving}
+                            >
+                                {archiving ? <Loader2 className="h-4 w-4 animate-spin mr-1" /> : <Archive className="h-4 w-4 mr-1" />}
+                                Archivar
+                            </Button>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {/* Audit Detail Modal */}
+            {showAuditDetailModal && selectedAuditDetail && (
+                <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
+                    <div className="bg-background rounded-lg shadow-2xl max-w-4xl w-full max-h-[90vh] flex flex-col">
+                        {/* Modal Header */}
+                        <div className="flex items-center justify-between p-4 border-b">
+                            <div>
+                                <h2 className="text-xl font-bold flex items-center gap-2">
+                                    <FileText className="h-5 w-5" />
+                                    Auditoría v{selectedAuditDetail.audit.version}
+                                    <Badge variant="outline">{selectedAuditDetail.audit.type}</Badge>
+                                </h2>
+                                <p className="text-sm text-muted-foreground">
+                                    {new Date(selectedAuditDetail.audit.fecha).toLocaleDateString('es-AR', {
+                                        day: '2-digit', month: 'long', year: 'numeric'
+                                    })}
+                                </p>
+                            </div>
+                            <Button variant="ghost" size="sm" onClick={() => setShowAuditDetailModal(false)}>
+                                <X className="h-4 w-4" />
+                            </Button>
+                        </div>
+
+                        {/* Modal Content */}
+                        <div className="flex-1 overflow-y-auto p-6 space-y-6">
+                            {/* Scores Summary */}
+                            <div className="grid grid-cols-3 gap-4">
+                                <div className="p-4 border rounded-lg text-center">
+                                    <div className={`text-3xl font-bold ${selectedAuditDetail.audit.evs_score >= 60 ? 'text-green-600' : selectedAuditDetail.audit.evs_score >= 40 ? 'text-yellow-600' : 'text-red-600'}`}>
+                                        {selectedAuditDetail.audit.evs_score}
+                                    </div>
+                                    <div className="text-sm text-muted-foreground">EVS Score</div>
+                                </div>
+                                <div className="p-4 border rounded-lg text-center">
+                                    <div className="text-2xl font-bold">{selectedAuditDetail.audit.score_onsite}</div>
+                                    <div className="text-sm text-muted-foreground">On-site /50</div>
+                                </div>
+                                <div className="p-4 border rounded-lg text-center">
+                                    <div className="text-2xl font-bold">{selectedAuditDetail.audit.score_offsite}</div>
+                                    <div className="text-sm text-muted-foreground">Off-site /50</div>
+                                </div>
+                            </div>
+
+                            {/* On-site Technical Details */}
+                            {selectedAuditDetail.audit.onsite_data && Object.keys(selectedAuditDetail.audit.onsite_data).length > 0 && (() => {
+                                const od = selectedAuditDetail.audit.onsite_data as Record<string, string | number | boolean>;
+                                const hasEvidence = od.readiness_evidence || od.structure_evidence || od.authority_evidence;
+                                return (
+                                    <div>
+                                        <h3 className="text-lg font-semibold mb-3">🔧 On-site (Técnico)</h3>
+                                        <div className="grid grid-cols-2 gap-3">
+                                            {/* Technical checks */}
+                                            <div className="p-3 border rounded-lg space-y-2">
+                                                <h4 className="font-medium text-sm">Checks técnicos</h4>
+                                                <div className="text-xs space-y-1">
+                                                    <div className="flex justify-between">
+                                                        <span>Robots.txt</span>
+                                                        <span>{od.robots_ok ? '✅' : '❌'}</span>
+                                                    </div>
+                                                    <div className="flex justify-between">
+                                                        <span>Sitemap.xml</span>
+                                                        <span>{od.sitemap_ok ? '✅' : '❌'}</span>
+                                                    </div>
+                                                    <div className="flex justify-between">
+                                                        <span>Canonical Tags</span>
+                                                        <span>{od.canonical_ok ? '✅' : '❌'}</span>
+                                                    </div>
+                                                    <div className="flex justify-between">
+                                                        <span>llms.txt</span>
+                                                        <span>{od.llms_txt_present ? '✅' : '❌'}</span>
+                                                    </div>
+                                                    <div className="flex justify-between">
+                                                        <span>Schema Markup</span>
+                                                        <span className="text-right">{String(od.schema_type || 'No detectado')}</span>
+                                                    </div>
+                                                </div>
+                                            </div>
+                                            {/* Scores */}
+                                            <div className="p-3 border rounded-lg space-y-2">
+                                                <h4 className="font-medium text-sm">Scores EVS</h4>
+                                                <div className="text-xs space-y-1">
+                                                    <div className="flex justify-between">
+                                                        <span>Readiness (Answer Box)</span>
+                                                        <span className="font-bold">{Number(od.answer_box_score || 0)}/10</span>
+                                                    </div>
+                                                    <div className="flex justify-between">
+                                                        <span>Structure (H1/H2)</span>
+                                                        <span className="font-bold">{Number(od.h1_h2_structure_score || 0)}/10</span>
+                                                    </div>
+                                                    <div className="flex justify-between">
+                                                        <span>Authority</span>
+                                                        <span className="font-bold">{Number(od.authority_signals_score || 0)}/10</span>
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        </div>
+                                        {/* Evidence */}
+                                        {hasEvidence && (
+                                            <details className="mt-3">
+                                                <summary className="text-sm font-medium cursor-pointer">📋 Ver evidencia On-site</summary>
+                                                <div className="mt-2 p-3 bg-muted/50 rounded text-xs space-y-2">
+                                                    {od.readiness_evidence && (
+                                                        <div><strong>Readiness:</strong> {String(od.readiness_evidence)}</div>
+                                                    )}
+                                                    {od.structure_evidence && (
+                                                        <div><strong>Structure:</strong> {String(od.structure_evidence)}</div>
+                                                    )}
+                                                    {od.authority_evidence && (
+                                                        <div><strong>Authority:</strong> {String(od.authority_evidence)}</div>
+                                                    )}
+                                                </div>
+                                            </details>
+                                        )}
+                                        {/* On-site Notes */}
+                                        {od.notas && (
+                                            <div className="mt-3 p-3 bg-yellow-50 dark:bg-yellow-950/20 rounded border border-yellow-200 dark:border-yellow-900">
+                                                <h4 className="font-medium text-sm mb-1">📝 Notas On-site</h4>
+                                                <p className="text-xs whitespace-pre-wrap">{String(od.notas)}</p>
+                                            </div>
+                                        )}
+                                    </div>
+                                );
+                            })()}
+
+                            {/* Off-site Qualitative Details */}
+                            {selectedAuditDetail.audit.offsite_data && Object.keys(selectedAuditDetail.audit.offsite_data).length > 0 && (
+                                <div>
+                                    <h3 className="text-lg font-semibold mb-3">🌐 Off-site (Cualitativo)</h3>
+                                    <div className="grid grid-cols-2 gap-3">
+                                        <div className="p-3 border rounded-lg space-y-2">
+                                            <h4 className="font-medium text-sm">Scores Cualitativos</h4>
+                                            <div className="text-xs space-y-1">
+                                                <div className="flex justify-between">
+                                                    <span>Entity Consistency</span>
+                                                    <span className="font-bold">{(selectedAuditDetail.audit.offsite_data as Record<string, unknown>).entity_consistency_score as number || 0}/10</span>
+                                                </div>
+                                                <div className="flex justify-between">
+                                                    <span>Canonical Sources</span>
+                                                    <span>{(selectedAuditDetail.audit.offsite_data as Record<string, unknown>).canonical_sources_presence ? '✅ Presente' : '❌ Ausente'}</span>
+                                                </div>
+                                                <div className="flex justify-between">
+                                                    <span>Reputation Score</span>
+                                                    <span className="font-bold">{(selectedAuditDetail.audit.offsite_data as Record<string, unknown>).reputation_score as number || 0}/10</span>
+                                                </div>
+                                                <div className="flex justify-between">
+                                                    <span>Share of Voice</span>
+                                                    <span className="font-bold">{(selectedAuditDetail.audit.offsite_data as Record<string, unknown>).sov_score as number || 0}%</span>
+                                                </div>
+                                            </div>
+                                        </div>
+                                        <div className="p-3 border rounded-lg">
+                                            <h4 className="font-medium text-sm mb-2">📝 Notas Off-site</h4>
+                                            <p className="text-xs whitespace-pre-wrap">{(selectedAuditDetail.audit.offsite_data as Record<string, unknown>).notas as string || 'Sin notas'}</p>
+                                        </div>
+                                    </div>
+                                </div>
+                            )}
+
+                            {/* Queries */}
+                            {selectedAuditDetail.queries.length > 0 && (
+                                <div>
+                                    <h3 className="text-lg font-semibold mb-3">
+                                        📝 Queries Analizadas ({selectedAuditDetail.queries.length})
+                                    </h3>
+                                    <div className="space-y-3">
+                                        {selectedAuditDetail.queries.map((query, i) => (
+                                            <div key={query.id || i} className="p-3 border rounded-lg">
+                                                <div className="flex items-start justify-between mb-2">
+                                                    <div className="flex-1">
+                                                        <p className="font-medium text-sm">{query.query_text}</p>
+                                                        <div className="flex items-center gap-2 mt-1">
+                                                            <Badge variant="outline" className="text-[10px]">{query.engine}</Badge>
+                                                            <span className={`text-xs ${query.is_mentioned ? 'text-green-600' : 'text-red-600'}`}>
+                                                                {query.is_mentioned ? '✅ Mencionado' : '❌ No aparece'}
+                                                            </span>
+                                                            {query.bucket && (
+                                                                <Badge variant="secondary" className="text-[10px]">{query.bucket}</Badge>
+                                                            )}
+                                                            {query.sentiment && (
+                                                                <Badge variant={query.sentiment === 'Positive' ? 'default' : query.sentiment === 'Negative' ? 'destructive' : 'outline'} className="text-[10px]">
+                                                                    {query.sentiment}
+                                                                </Badge>
+                                                            )}
+                                                        </div>
+                                                        {query.competitors_mentioned && query.competitors_mentioned.length > 0 && (
+                                                            <div className="text-xs text-muted-foreground mt-1">
+                                                                Competidores: {query.competitors_mentioned.join(', ')}
+                                                            </div>
+                                                        )}
+                                                    </div>
+                                                </div>
+                                                {query.raw_response && (
+                                                    <details className="mt-2">
+                                                        <summary className="text-xs text-muted-foreground cursor-pointer hover:text-foreground">
+                                                            Ver respuesta completa del motor
+                                                        </summary>
+                                                        <div className="mt-2 p-2 bg-muted/50 rounded text-xs max-h-60 overflow-y-auto whitespace-pre-wrap">
+                                                            {query.raw_response}
+                                                        </div>
+                                                    </details>
+                                                )}
+                                            </div>
+                                        ))}
+                                    </div>
+                                </div>
+                            )}
+
+                            {selectedAuditDetail.queries.length === 0 && (
+                                <p className="text-sm text-muted-foreground text-center py-8">
+                                    No hay queries guardadas para esta auditoría.
+                                </p>
+                            )}
+                        </div>
+
+                        {/* Modal Footer */}
+                        <div className="p-4 border-t flex justify-between">
+                            <div className="flex gap-2">
+                                <Button
+                                    variant="outline"
+                                    onClick={() => {
+                                        // Export audit as JSON
+                                        const exportData = {
+                                            audit: selectedAuditDetail.audit,
+                                            queries: selectedAuditDetail.queries,
+                                            exported_at: new Date().toISOString()
+                                        }
+                                        const blob = new Blob([JSON.stringify(exportData, null, 2)], { type: 'application/json' })
+                                        const url = URL.createObjectURL(blob)
+                                        const a = document.createElement('a')
+                                        a.href = url
+                                        a.download = `auditoria-v${selectedAuditDetail.audit.version}-${new Date(selectedAuditDetail.audit.fecha).toISOString().split('T')[0]}.json`
+                                        a.click()
+                                        URL.revokeObjectURL(url)
+                                        toast.success('Auditoría exportada como JSON')
+                                    }}
+                                >
+                                    <Download className="h-4 w-4 mr-1" />
+                                    JSON
+                                </Button>
+                                <Button
+                                    variant="outline"
+                                    onClick={() => {
+                                        const audit = selectedAuditDetail.audit;
+                                        const od = audit.onsite_data as Record<string, string | number | boolean>;
+                                        const ofd = audit.offsite_data as Record<string, string | number | boolean>;
+
+                                        // Build comprehensive CSV with multiple sections
+                                        let csvContent = '\uFEFF'; // BOM for Excel
+
+                                        // Section 1: Audit Summary
+                                        csvContent += 'RESUMEN DE AUDITORÍA\n';
+                                        csvContent += `Versión,${audit.version}\n`;
+                                        csvContent += `Tipo,${audit.type}\n`;
+                                        csvContent += `Fecha,${new Date(audit.fecha).toLocaleDateString('es-AR')}\n`;
+                                        csvContent += `EVS Score Total,${audit.evs_score}\n`;
+                                        csvContent += `Score On-site,${audit.score_onsite}\n`;
+                                        csvContent += `Score Off-site,${audit.score_offsite}\n`;
+                                        csvContent += '\n';
+
+                                        // Section 2: On-site Technical
+                                        if (od && Object.keys(od).length > 0) {
+                                            csvContent += 'ON-SITE TÉCNICO\n';
+                                            csvContent += `Robots.txt,${od.robots_ok ? 'OK' : 'No'}\n`;
+                                            csvContent += `Sitemap.xml,${od.sitemap_ok ? 'OK' : 'No'}\n`;
+                                            csvContent += `Canonical Tags,${od.canonical_ok ? 'OK' : 'No'}\n`;
+                                            csvContent += `llms.txt,${od.llms_txt_present ? 'Presente' : 'Ausente'}\n`;
+                                            csvContent += `Schema Markup,${od.schema_type || 'No detectado'}\n`;
+                                            csvContent += `Readiness Score,${od.answer_box_score || 0}/10\n`;
+                                            csvContent += `Structure Score,${od.h1_h2_structure_score || 0}/10\n`;
+                                            csvContent += `Authority Score,${od.authority_signals_score || 0}/10\n`;
+                                            if (od.readiness_evidence) csvContent += `Evidencia Readiness,"${String(od.readiness_evidence).replace(/"/g, '""')}"\n`;
+                                            if (od.structure_evidence) csvContent += `Evidencia Structure,"${String(od.structure_evidence).replace(/"/g, '""')}"\n`;
+                                            if (od.authority_evidence) csvContent += `Evidencia Authority,"${String(od.authority_evidence).replace(/"/g, '""')}"\n`;
+                                            if (od.notas) csvContent += `Notas On-site,"${String(od.notas).replace(/"/g, '""')}"\n`;
+                                            csvContent += '\n';
+                                        }
+
+                                        // Section 3: Off-site Qualitative
+                                        if (ofd && Object.keys(ofd).length > 0) {
+                                            csvContent += 'OFF-SITE CUALITATIVO\n';
+                                            csvContent += `Entity Consistency,${ofd.entity_consistency_score || 0}/10\n`;
+                                            csvContent += `Canonical Sources,${ofd.canonical_sources_presence ? 'Presente' : 'Ausente'}\n`;
+                                            csvContent += `Reputation Score,${ofd.reputation_score || 0}/10\n`;
+                                            csvContent += `Share of Voice,${ofd.sov_score || 0}%\n`;
+                                            if (ofd.notas) csvContent += `Notas Off-site,"${String(ofd.notas).replace(/"/g, '""')}"\n`;
+                                            csvContent += '\n';
+                                        }
+
+                                        // Section 4: Queries
+                                        csvContent += 'QUERIES ANALIZADAS\n';
+                                        csvContent += 'Query,Engine,Mencionado,Bucket,Sentiment,Competidores,Respuesta Completa\n';
+                                        selectedAuditDetail.queries.forEach(q => {
+                                            const row = [
+                                                `"${q.query_text.replace(/"/g, '""')}"`,
+                                                q.engine,
+                                                q.is_mentioned ? 'Sí' : 'No',
+                                                q.bucket || '',
+                                                q.sentiment || '',
+                                                (q.competitors_mentioned || []).join('; '),
+                                                `"${(q.raw_response || '').replace(/"/g, '""').replace(/\n/g, ' ')}"`
+                                            ];
+                                            csvContent += row.join(',') + '\n';
+                                        });
+
+                                        const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8' });
+                                        const url = URL.createObjectURL(blob);
+                                        const a = document.createElement('a');
+                                        a.href = url;
+                                        a.download = `auditoria-completa-v${audit.version}-${new Date(audit.fecha).toISOString().split('T')[0]}.csv`;
+                                        a.click();
+                                        URL.revokeObjectURL(url);
+                                        toast.success('Auditoría completa exportada como CSV');
+                                    }}
+                                >
+                                    <FileText className="h-4 w-4 mr-1" />
+                                    CSV
+                                </Button>
+                            </div>
+                            <div className="flex gap-2">
+                                <Button variant="outline" onClick={() => setShowAuditDetailModal(false)}>
+                                    Cerrar
+                                </Button>
+                                <Button onClick={() => {
+                                    const type = selectedAuditDetail.audit.type as 'mini' | 'full' | 'retainer'
+                                    setAuditType(type || 'full')
+                                    setShowAuditDetailModal(false)
+                                    toast.info(`Tipo de auditoría cambiado a ${type || 'full'}`)
+                                }}>
+                                    Usar este tipo
+                                </Button>
                             </div>
                         </div>
                     </div>
