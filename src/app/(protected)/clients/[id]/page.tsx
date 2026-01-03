@@ -567,12 +567,18 @@ export default function ClientDetailPage() {
 
         setGeneratingReport(true)
         try {
+            // For retainer audits, pass the previous audit ID for Delta Comparison
+            const previousAuditId = auditType === 'retainer' && allAudits.length > 1
+                ? allAudits[1]?.id  // Second audit (first is current)
+                : undefined;
+
             const result = await generateAuditReport(
                 lastAudit.id,
                 client.id,
                 client.nombre,
                 client.competidores || [],
-                auditType
+                auditType,
+                previousAuditId
             )
 
             if (result.success && result.report && result.markdown) {
@@ -929,6 +935,53 @@ export default function ClientDetailPage() {
                                             <Button size="sm" variant="outline" onClick={handleAddQuery}><Plus className="h-4 w-4" /></Button>
                                         </div>
                                     </div>
+
+                                    {/* Load Previous Queries Banner (for Retainer) */}
+                                    {auditType === 'retainer' && allAudits.length > 0 && offsiteQueries.length === 0 && (
+                                        <div className="bg-blue-50 dark:bg-blue-950/30 border border-blue-200 dark:border-blue-800 rounded-lg p-4 mb-4">
+                                            <p className="text-sm font-medium mb-2 flex items-center gap-2">
+                                                💡 Cliente con auditoría previa (v{allAudits[0]?.version})
+                                            </p>
+                                            <p className="text-xs text-muted-foreground mb-3">
+                                                Podés cargar las mismas queries del mes anterior para comparar evolución.
+                                            </p>
+                                            <Button
+                                                variant="outline"
+                                                size="sm"
+                                                onClick={async () => {
+                                                    if (!allAudits[0]?.id) return;
+                                                    toast.info('Cargando queries previas...');
+
+                                                    const { data: prevQueries } = await supabase
+                                                        .from('offsite_queries')
+                                                        .select('query_text')
+                                                        .eq('audit_id', allAudits[0].id);
+
+                                                    if (!prevQueries || prevQueries.length === 0) {
+                                                        toast.error('No se encontraron queries en la auditoría anterior');
+                                                        return;
+                                                    }
+
+                                                    // Get unique queries and limit to current audit type max
+                                                    const uniqueQueries = [...new Set(prevQueries.map((q: { query_text: string }) => q.query_text))];
+                                                    const maxQueries = SERVICE_LIMITS[auditType].maxQueries;
+                                                    const limitedQueries = uniqueQueries.slice(0, maxQueries);
+
+                                                    setOffsiteQueries(limitedQueries.map(text => ({
+                                                        id: Math.random().toString(36),
+                                                        query_text: text,
+                                                        engine: 'ChatGPT',
+                                                        mentioned: false,
+                                                        status: 'pending' as const
+                                                    })));
+
+                                                    toast.success(`${limitedQueries.length} queries cargadas de v${allAudits[0].version}`);
+                                                }}
+                                            >
+                                                📥 Cargar {allAudits[0]?.version ? `queries de v${allAudits[0].version}` : 'queries previas'}
+                                            </Button>
+                                        </div>
+                                    )}
 
                                     {/* SoV Visualization */}
                                     <div className="mb-4 space-y-1">

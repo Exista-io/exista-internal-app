@@ -736,6 +736,33 @@ export interface AuditReportData {
         };
     }>;
 
+    // NEW: Delta Comparison (for Retainer audits)
+    delta_comparison?: {
+        previous_version: string;
+        previous_date: string;
+        evs_change: number;
+        sov_change: number;
+        score_onsite_change: number;
+        score_offsite_change: number;
+        gaps_closed: Array<{ query: string; engine: string }>;
+        gaps_opened: Array<{ query: string; engine: string }>;
+    };
+
+    // NEW: Action Progress (for Retainer audits)
+    action_progress?: {
+        total: number;
+        completed: number;
+        in_progress: number;
+        pending: number;
+        blocked: number;
+        actions: Array<{
+            title: string;
+            emoji: string;
+            status: string;
+            due_date?: string;
+        }>;
+    };
+
     generated_at: string;
 }
 
@@ -769,13 +796,15 @@ function sanitizeText(text: string): string {
 /**
  * EVS v3.0: Generate AI-Powered Audit Report
  * Uses ONLY real data from the audit - ZERO MOCK DATA.
+ * For Retainer audits, includes Delta Comparison with previous audit.
  */
 export async function generateAuditReport(
     auditId: string,
     clientId: string,
     clientName: string,
     competidores: string[],
-    auditType: AuditType = 'full'
+    auditType: AuditType = 'full',
+    previousAuditId?: string  // NEW: For Delta Comparison in Retainer audits
 ): Promise<{ success: boolean; report?: AuditReportData; markdown?: string; error?: string }> {
 
     console.log('[generateAuditReport] auditType received:', auditType);
@@ -828,6 +857,46 @@ export async function generateAuditReport(
                 error: 'No hay queries ejecutadas en esta auditoría. Ejecutá al menos 5 queries antes de generar el reporte.'
             };
         }
+
+        // 5. NEW: Fetch PREVIOUS audit data for Delta Comparison (if Retainer)
+        let previousData: {
+            audit: Record<string, unknown> | null;
+            queries: Array<{ query_text: string; engine: string; mentioned: boolean }>;
+            brandSoV: number;
+        } | null = null;
+
+        if (previousAuditId) {
+            console.log('[generateAuditReport] Fetching previous audit for delta:', previousAuditId);
+
+            const { data: prevAudit } = await supabase
+                .from('audits')
+                .select('*')
+                .eq('id', previousAuditId)
+                .single();
+
+            const { data: prevQueries } = await supabase
+                .from('offsite_queries')
+                .select('*')
+                .eq('audit_id', previousAuditId);
+
+            if (prevAudit && prevQueries) {
+                const prevMentions = prevQueries.filter((q: { mentioned: boolean }) => q.mentioned).length;
+                const prevSoV = prevQueries.length > 0 ? Math.round((prevMentions / prevQueries.length) * 100) : 0;
+
+                previousData = {
+                    audit: prevAudit,
+                    queries: prevQueries,
+                    brandSoV: prevSoV
+                };
+            }
+        }
+
+        // 6. NEW: Fetch client actions for Action Progress section
+        const { data: clientActions } = await supabase
+            .from('audit_actions')
+            .select('*')
+            .eq('client_id', clientId)
+            .order('priority', { ascending: true });
 
         // 5. Calculate REAL Share of Voice
         const totalQueries = queries.length;
@@ -1028,6 +1097,62 @@ Sé directo y profesional. En español argentino.
         });
 
         // 11. Build report data
+        // Calculate Delta Comparison if previous data exists
+        let deltaComparison: AuditReportData['delta_comparison'] = undefined;
+        if (previousData && previousData.audit) {
+            const prevAudit = previousData.audit;
+            const currentQueries = queries;
+            const prevQueries = previousData.queries;
+
+            // Find gaps closed (was not mentioned, now is mentioned)
+            const gapsClosed: Array<{ query: string; engine: string }> = [];
+            // Find gaps opened (was mentioned, now is not)
+            const gapsOpened: Array<{ query: string; engine: string }> = [];
+
+            currentQueries.forEach(cq => {
+                const prevMatch = prevQueries.find(
+                    (pq: { query_text: string; engine: string }) =>
+                        pq.query_text === cq.query_text && pq.engine === cq.engine
+                );
+                if (prevMatch) {
+                    if (!prevMatch.mentioned && cq.mentioned) {
+                        gapsClosed.push({ query: cq.query_text, engine: cq.engine });
+                    } else if (prevMatch.mentioned && !cq.mentioned) {
+                        gapsOpened.push({ query: cq.query_text, engine: cq.engine });
+                    }
+                }
+            });
+
+            deltaComparison = {
+                previous_version: (prevAudit.version as string) || '?',
+                previous_date: (prevAudit.fecha as string) || '',
+                evs_change: evsScore - ((prevAudit.score_total as number) || 0),
+                sov_change: brandSoV - previousData.brandSoV,
+                score_onsite_change: (audit.score_onsite || 0) - ((prevAudit.score_onsite as number) || 0),
+                score_offsite_change: (audit.score_offsite || 0) - ((prevAudit.score_offsite as number) || 0),
+                gaps_closed: gapsClosed,
+                gaps_opened: gapsOpened
+            };
+        }
+
+        // Calculate Action Progress
+        let actionProgress: AuditReportData['action_progress'] = undefined;
+        if (clientActions && clientActions.length > 0) {
+            actionProgress = {
+                total: clientActions.length,
+                completed: clientActions.filter((a: { status: string }) => a.status === 'done').length,
+                in_progress: clientActions.filter((a: { status: string }) => a.status === 'in_progress').length,
+                pending: clientActions.filter((a: { status: string }) => a.status === 'pending').length,
+                blocked: clientActions.filter((a: { status: string }) => a.status === 'blocked').length,
+                actions: clientActions.map((a: { title: string; emoji: string; status: string; due_date?: string }) => ({
+                    title: a.title,
+                    emoji: a.emoji,
+                    status: a.status,
+                    due_date: a.due_date
+                }))
+            };
+        }
+
         const reportData: AuditReportData = {
             executive_summary: summaryResult.text,
             top3_hallazgos: hallazgos.slice(0, 3),
@@ -1044,7 +1169,9 @@ Sé directo y profesional. En español argentino.
             gaps,
             recommendations: aiResult.object.recommendations,
             onsite_evidence: onsiteEvidence,
-            queries_detail: queriesDetail, // NEW
+            queries_detail: queriesDetail,
+            delta_comparison: deltaComparison,
+            action_progress: actionProgress,
             generated_at: new Date().toISOString()
         };
 
@@ -1085,8 +1212,34 @@ ${data.executive_summary}
 ${data.top3_hallazgos.length > 0 ? `### 🎯 Top 3 Hallazgos
 
 ${data.top3_hallazgos.map((h, i) => `${i + 1}. ${h}`).join('\n')}
-` : ''}
----
+` : ''}${data.delta_comparison ? `---
+
+## 📈 Evolución vs v${data.delta_comparison.previous_version} (${new Date(data.delta_comparison.previous_date).toLocaleDateString('es-AR')})
+
+| Métrica | Anterior | Actual | Cambio |
+|:---|:---:|:---:|:---:|
+| EVS Score | ${data.evs_score - data.delta_comparison.evs_change} | ${data.evs_score} | **${data.delta_comparison.evs_change >= 0 ? '+' : ''}${data.delta_comparison.evs_change}** ${data.delta_comparison.evs_change >= 0 ? '↑' : '↓'} |
+| Share of Voice | ${data.benchmark.brand_sov - data.delta_comparison.sov_change}% | ${data.benchmark.brand_sov}% | **${data.delta_comparison.sov_change >= 0 ? '+' : ''}${data.delta_comparison.sov_change}%** ${data.delta_comparison.sov_change >= 0 ? '↑' : '↓'} |
+| On-site | ${data.score_onsite - data.delta_comparison.score_onsite_change}/50 | ${data.score_onsite}/50 | ${data.delta_comparison.score_onsite_change >= 0 ? '+' : ''}${data.delta_comparison.score_onsite_change} |
+| Off-site | ${data.score_offsite - data.delta_comparison.score_offsite_change}/50 | ${data.score_offsite}/50 | ${data.delta_comparison.score_offsite_change >= 0 ? '+' : ''}${data.delta_comparison.score_offsite_change} |
+
+${data.delta_comparison.gaps_closed.length > 0 ? `### ✅ Gaps Cerrados
+${data.delta_comparison.gaps_closed.map(g => `- **[${g.engine}]** "${g.query}" → Ahora menciona ${clientName}`).join('\n')}
+` : ''}${data.delta_comparison.gaps_opened.length > 0 ? `### 🔴 Nuevos Gaps
+${data.delta_comparison.gaps_opened.map(g => `- **[${g.engine}]** "${g.query}" → Ya no menciona ${clientName}`).join('\n')}
+` : ''}` : ''}${data.action_progress ? `---
+
+## 📋 Progreso de Acciones
+
+**Estado general:** ${data.action_progress.completed}/${data.action_progress.total} completadas (${Math.round((data.action_progress.completed / data.action_progress.total) * 100)}%)
+
+| Status | Acción |
+|:---:|:---|
+${data.action_progress.actions.map(a => `| ${a.status === 'done' ? '✅' : a.status === 'in_progress' ? '🔄' : a.status === 'blocked' ? '🚫' : '⬜'} | ${a.emoji} ${a.title} |`).join('\n')}
+
+${data.action_progress.blocked > 0 ? `> ⚠️ **Hay ${data.action_progress.blocked} acción(es) bloqueada(s)** que requieren atención.` : ''}${data.action_progress.completed === data.action_progress.total ? `
+> 🎉 **¡Excelente!** Todas las acciones han sido completadas.` : ''}
+` : ''}---
 
 ## 📊 Benchmark Competitivo
 
