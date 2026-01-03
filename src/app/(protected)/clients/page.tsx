@@ -2,7 +2,7 @@
 
 import { useEffect, useState, useCallback } from 'react'
 import Link from 'next/link'
-import { Plus, Eye, Search, Filter, Archive } from 'lucide-react'
+import { Plus, Eye, Search, Filter, Archive, ArrowLeft } from 'lucide-react'
 import { supabase } from '@/lib/supabase'
 import { Client, Audit } from '@/types/database'
 import { archiveClient } from '@/app/actions'
@@ -174,112 +174,119 @@ export default function ClientsPage() {
                     <h1 className="text-3xl font-bold tracking-tight">Gestión de Clientes</h1>
                     <p className="text-muted-foreground mt-1">{clients.length} clientes en total</p>
                 </div>
-                <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
-                    <DialogTrigger asChild>
-                        <Button className="font-semibold">
-                            <Plus className="mr-2 h-4 w-4" /> Nuevo Cliente
+                <div className="flex gap-2">
+                    <Link href="/">
+                        <Button variant="outline">
+                            <ArrowLeft className="mr-2 h-4 w-4" /> Dashboard
                         </Button>
-                    </DialogTrigger>
-                    <DialogContent className="sm:max-w-[500px]">
-                        <DialogHeader>
-                            <DialogTitle>Agregar Nuevo Cliente</DialogTitle>
-                        </DialogHeader>
-                        <form onSubmit={handleCreateClient} className="grid gap-4 py-4">
-                            <div className="grid grid-cols-4 items-center gap-4">
-                                <Label htmlFor="nombre" className="text-right">
-                                    Empresa
-                                </Label>
-                                <Input
-                                    id="nombre"
-                                    value={newClient.nombre}
-                                    onChange={(e) => setNewClient({ ...newClient, nombre: e.target.value })}
-                                    className="col-span-3"
-                                    required
-                                />
-                            </div>
-                            <div className="grid grid-cols-4 items-center gap-4">
-                                <Label htmlFor="dominio" className="text-right">
-                                    Dominio
-                                </Label>
-                                <Input
-                                    id="dominio"
-                                    value={newClient.dominio}
-                                    onChange={(e) => setNewClient({ ...newClient, dominio: e.target.value })}
-                                    className="col-span-3"
-                                    placeholder="https://example.com"
-                                    required
-                                />
-                            </div>
-                            <div className="grid grid-cols-4 items-center gap-4">
-                                <Label htmlFor="mercado" className="text-right">
-                                    Mercado
-                                </Label>
-                                <Select
-                                    value={newClient.mercado}
-                                    onValueChange={(value) => setNewClient({ ...newClient, mercado: value })}
-                                >
-                                    <SelectTrigger className="col-span-3">
-                                        <SelectValue placeholder="Seleccionar mercado" />
-                                    </SelectTrigger>
-                                    <SelectContent>
-                                        <SelectItem value="AR">Argentina (AR)</SelectItem>
-                                        <SelectItem value="MX">México (MX)</SelectItem>
-                                        <SelectItem value="ES">España (ES)</SelectItem>
-                                    </SelectContent>
-                                </Select>
-                            </div>
-                            <div className="grid grid-cols-4 items-center gap-4">
-                                <Label htmlFor="stage" className="text-right">
-                                    Stage
-                                </Label>
-                                <Select
-                                    value={newClient.stage}
-                                    onValueChange={(value) => setNewClient({ ...newClient, stage: value })}
-                                >
-                                    <SelectTrigger className="col-span-3">
-                                        <SelectValue />
-                                    </SelectTrigger>
-                                    <SelectContent>
-                                        <SelectItem value="prospect">🟡 Prospect</SelectItem>
-                                        <SelectItem value="mini">🔵 Mini Audit</SelectItem>
-                                        <SelectItem value="full">🟢 Full Audit</SelectItem>
-                                        <SelectItem value="retainer">🟣 Retainer</SelectItem>
-                                    </SelectContent>
-                                </Select>
-                            </div>
-                            <div className="grid grid-cols-4 items-center gap-4">
-                                <Label htmlFor="competidores" className="text-right">
-                                    Competidores
-                                </Label>
-                                <Input
-                                    id="competidores"
-                                    value={newClient.competidores}
-                                    onChange={(e) => setNewClient({ ...newClient, competidores: e.target.value })}
-                                    className="col-span-3"
-                                    placeholder="Comp1, Comp2, Comp3"
-                                />
-                            </div>
-                            <div className="grid grid-cols-4 items-start gap-4">
-                                <Label htmlFor="notes" className="text-right mt-2">
-                                    Notas
-                                </Label>
-                                <Textarea
-                                    id="notes"
-                                    value={newClient.notes}
-                                    onChange={(e) => setNewClient({ ...newClient, notes: e.target.value })}
-                                    className="col-span-3"
-                                    placeholder="Cómo llegó, qué necesita, contexto..."
-                                    rows={3}
-                                />
-                            </div>
-                            <div className="flex justify-end pt-4">
-                                <Button type="submit" disabled={isSubmitting}>
-                                    {isSubmitting ? 'Guardando...' : 'Guardar Cliente'}
-                                </Button>
-                            </div>
-                        </form>
-                    </DialogContent>
-                </Dialog>
+                    </Link>
+                    <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
+                        <DialogTrigger asChild>
+                            <Button className="font-semibold">
+                                <Plus className="mr-2 h-4 w-4" /> Nuevo Cliente
+                            </Button>
+                        </DialogTrigger>
+                        <DialogContent className="sm:max-w-[500px]">
+                            <DialogHeader>
+                                <DialogTitle>Agregar Nuevo Cliente</DialogTitle>
+                            </DialogHeader>
+                            <form onSubmit={handleCreateClient} className="grid gap-4 py-4">
+                                <div className="grid grid-cols-4 items-center gap-4">
+                                    <Label htmlFor="nombre" className="text-right">
+                                        Empresa
+                                    </Label>
+                                    <Input
+                                        id="nombre"
+                                        value={newClient.nombre}
+                                        onChange={(e) => setNewClient({ ...newClient, nombre: e.target.value })}
+                                        className="col-span-3"
+                                        required
+                                    />
+                                </div>
+                                <div className="grid grid-cols-4 items-center gap-4">
+                                    <Label htmlFor="dominio" className="text-right">
+                                        Dominio
+                                    </Label>
+                                    <Input
+                                        id="dominio"
+                                        value={newClient.dominio}
+                                        onChange={(e) => setNewClient({ ...newClient, dominio: e.target.value })}
+                                        className="col-span-3"
+                                        placeholder="https://example.com"
+                                        required
+                                    />
+                                </div>
+                                <div className="grid grid-cols-4 items-center gap-4">
+                                    <Label htmlFor="mercado" className="text-right">
+                                        Mercado
+                                    </Label>
+                                    <Select
+                                        value={newClient.mercado}
+                                        onValueChange={(value) => setNewClient({ ...newClient, mercado: value })}
+                                    >
+                                        <SelectTrigger className="col-span-3">
+                                            <SelectValue placeholder="Seleccionar mercado" />
+                                        </SelectTrigger>
+                                        <SelectContent>
+                                            <SelectItem value="AR">Argentina (AR)</SelectItem>
+                                            <SelectItem value="MX">México (MX)</SelectItem>
+                                            <SelectItem value="ES">España (ES)</SelectItem>
+                                        </SelectContent>
+                                    </Select>
+                                </div>
+                                <div className="grid grid-cols-4 items-center gap-4">
+                                    <Label htmlFor="stage" className="text-right">
+                                        Stage
+                                    </Label>
+                                    <Select
+                                        value={newClient.stage}
+                                        onValueChange={(value) => setNewClient({ ...newClient, stage: value })}
+                                    >
+                                        <SelectTrigger className="col-span-3">
+                                            <SelectValue />
+                                        </SelectTrigger>
+                                        <SelectContent>
+                                            <SelectItem value="prospect">🟡 Prospect</SelectItem>
+                                            <SelectItem value="mini">🔵 Mini Audit</SelectItem>
+                                            <SelectItem value="full">🟢 Full Audit</SelectItem>
+                                            <SelectItem value="retainer">🟣 Retainer</SelectItem>
+                                        </SelectContent>
+                                    </Select>
+                                </div>
+                                <div className="grid grid-cols-4 items-center gap-4">
+                                    <Label htmlFor="competidores" className="text-right">
+                                        Competidores
+                                    </Label>
+                                    <Input
+                                        id="competidores"
+                                        value={newClient.competidores}
+                                        onChange={(e) => setNewClient({ ...newClient, competidores: e.target.value })}
+                                        className="col-span-3"
+                                        placeholder="Comp1, Comp2, Comp3"
+                                    />
+                                </div>
+                                <div className="grid grid-cols-4 items-start gap-4">
+                                    <Label htmlFor="notes" className="text-right mt-2">
+                                        Notas
+                                    </Label>
+                                    <Textarea
+                                        id="notes"
+                                        value={newClient.notes}
+                                        onChange={(e) => setNewClient({ ...newClient, notes: e.target.value })}
+                                        className="col-span-3"
+                                        placeholder="Cómo llegó, qué necesita, contexto..."
+                                        rows={3}
+                                    />
+                                </div>
+                                <div className="flex justify-end pt-4">
+                                    <Button type="submit" disabled={isSubmitting}>
+                                        {isSubmitting ? 'Guardando...' : 'Guardar Cliente'}
+                                    </Button>
+                                </div>
+                            </form>
+                        </DialogContent>
+                    </Dialog>
+                </div>
             </div>
 
             {/* Filters */}

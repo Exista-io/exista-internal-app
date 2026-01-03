@@ -80,9 +80,12 @@ export default function DashboardPage() {
       })
       setStageCounts(counts)
 
-      const pendingActions = actions.filter((a: any) => a.status !== 'done').length
+      // Filter actions by active clients only
+      const activeClientIds = new Set(clients.map(c => c.id))
+      const activeActions = actions.filter((a: any) => activeClientIds.has(a.client_id))
+      const pendingActions = activeActions.filter((a: any) => a.status !== 'done').length
       const currentDate = new Date()
-      const overdueActions = actions.filter((a: any) => {
+      const overdueActions = activeActions.filter((a: any) => {
         if (a.status === 'done' || !a.due_date) return false
         return new Date(a.due_date) < currentDate
       }).length
@@ -121,11 +124,13 @@ export default function DashboardPage() {
           totalEvsSum += score;
           totalEvsCount++;
 
-          // Count audits this month
-          const auditDate = new Date(latest.fecha);
-          if (auditDate >= startOfMonth) {
-            auditsThisMonthCount++;
-          }
+          // Count audits this month (count all audits from this client in current month)
+          clientAudits.forEach(audit => {
+            const auditDate = new Date(audit.fecha);
+            if (auditDate >= startOfMonth) {
+              auditsThisMonthCount++;
+            }
+          })
 
           // Categorize
           if (score >= 90) status = 'Elite';
