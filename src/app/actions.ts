@@ -1702,3 +1702,136 @@ export async function updateActionDetails(
         return { success: false, error: 'Error al actualizar la acción' };
     }
 }
+
+/**
+ * Update client stage based on the audit type just saved
+ */
+export async function updateClientStage(
+    clientId: string,
+    auditType: 'mini' | 'full' | 'retainer'
+): Promise<{ success: boolean; error?: string }> {
+    const { createClient } = await import('@supabase/supabase-js');
+    const supabase = createClient(
+        process.env.NEXT_PUBLIC_SUPABASE_URL!,
+        process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
+    );
+
+    // Determine new stage based on audit type hierarchy
+    // retainer > full > mini > prospect
+    const stageHierarchy: Record<string, number> = {
+        prospect: 0,
+        mini: 1,
+        full: 2,
+        retainer: 3
+    };
+
+    try {
+        // Get current stage
+        const { data: client } = await supabase
+            .from('clients')
+            .select('stage')
+            .eq('id', clientId)
+            .single();
+
+        const currentStage = (client?.stage as string) || 'prospect';
+        const newStage = auditType;
+
+        // Only update if new stage is higher in hierarchy
+        if (stageHierarchy[newStage] > stageHierarchy[currentStage]) {
+            const { error } = await supabase
+                .from('clients')
+                .update({ stage: newStage })
+                .eq('id', clientId);
+
+            if (error) {
+                console.error('Error updating client stage:', error);
+                return { success: false, error: error.message };
+            }
+        }
+
+        return { success: true };
+    } catch (e) {
+        console.error('Update client stage exception:', e);
+        return { success: false, error: 'Error al actualizar el stage del cliente' };
+    }
+}
+
+/**
+ * Archive a client (hide from dashboard and lists)
+ */
+export async function archiveClient(
+    clientId: string
+): Promise<{ success: boolean; error?: string }> {
+    const { createClient } = await import('@supabase/supabase-js');
+    const supabase = createClient(
+        process.env.NEXT_PUBLIC_SUPABASE_URL!,
+        process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
+    );
+
+    try {
+        const { error } = await supabase
+            .from('clients')
+            .update({ archived: true })
+            .eq('id', clientId);
+
+        if (error) {
+            console.error('Error archiving client:', error);
+            return { success: false, error: error.message };
+        }
+
+        return { success: true };
+    } catch (e) {
+        console.error('Archive client exception:', e);
+        return { success: false, error: 'Error al archivar el cliente' };
+    }
+}
+
+/**
+ * Create a manual action (not from AI recommendations)
+ */
+export async function createManualAction(
+    clientId: string,
+    auditId: string,
+    data: {
+        title: string;
+        description: string;
+        priority?: number;
+        ownerType?: 'exista' | 'client';
+    }
+): Promise<{ success: boolean; action?: Action; error?: string }> {
+    const { createClient } = await import('@supabase/supabase-js');
+    const supabase = createClient(
+        process.env.NEXT_PUBLIC_SUPABASE_URL!,
+        process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
+    );
+
+    try {
+        const { data: action, error } = await supabase
+            .from('audit_actions')
+            .insert({
+                client_id: clientId,
+                audit_id: auditId,
+                title: data.title,
+                description: data.description,
+                priority: data.priority || 5,
+                emoji: '📌',
+                impact: 'medio',
+                difficulty: 'media',
+                estimated_time: '-',
+                status: 'pending',
+                owner_type: data.ownerType || 'exista'
+            })
+            .select()
+            .single();
+
+        if (error) {
+            console.error('Error creating manual action:', error);
+            return { success: false, error: error.message };
+        }
+
+        return { success: true, action: action as Action };
+    } catch (e) {
+        console.error('Create manual action exception:', e);
+        return { success: false, error: 'Error al crear la acción' };
+    }
+}

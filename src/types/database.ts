@@ -8,6 +8,9 @@ export interface Client {
   dominio: string;
   competidores: string[];
   mercado: string;
+  stage: 'prospect' | 'mini' | 'full' | 'retainer' | 'churned';  // Phase 9
+  notes?: string;  // Phase 9
+  archived?: boolean;  // Phase 9
   created_at: string;
 }
 

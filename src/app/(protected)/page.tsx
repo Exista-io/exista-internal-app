@@ -4,7 +4,7 @@ import { useEffect, useState } from 'react'
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
 import { supabase } from '@/lib/supabase'
 import { Client, Audit } from '@/types/database'
-import { Users, Activity, CalendarDays, TrendingUp, TrendingDown, Minus, LogOut } from 'lucide-react'
+import { Users, Activity, CalendarDays, TrendingUp, TrendingDown, Minus, LogOut, ListChecks, AlertTriangle } from 'lucide-react'
 import {
   BarChart,
   Bar,
@@ -36,7 +36,10 @@ export default function DashboardPage() {
     totalClients: 0,
     avgEvs: 0,
     auditsThisMonth: 0,
+    pendingActions: 0,
+    overdueActions: 0,
   })
+  const [stageCounts, setStageCounts] = useState<Record<string, number>>({ prospect: 0, mini: 0, full: 0, retainer: 0 })
   const [auditList, setAuditList] = useState<(Audit & { client_name: string })[]>([])
   const [distribution, setDistribution] = useState<{ name: string; value: number; color: string }[]>([])
   const [clientsWithEvolution, setClientsWithEvolution] = useState<ClientWithLatestAudit[]>([])
@@ -48,20 +51,39 @@ export default function DashboardPage() {
   const fetchDashboardData = async () => {
     setLoading(true)
     try {
-      // 1. Fetch Clients
-      const { data: clientsData, error: clientsError } = await supabase.from('clients').select('*')
+      // 1. Fetch Clients (exclude archived)
+      const { data: clientsData, error: clientsError } = await supabase.from('clients').select('*').or('archived.is.null,archived.eq.false')
       if (clientsError) throw clientsError;
 
       // 2. Fetch All Audits
       const { data: auditsData, error: auditsError } = await supabase.from('audits').select('*').order('fecha', { ascending: false })
       if (auditsError) throw auditsError;
 
+      // 3. Fetch All Actions
+      const { data: actionsData } = await supabase.from('audit_actions').select('*')
+
       // Explicit casting if needed, though with types it should work. 
       // If it failed, let's cast to ensure safety.
       const clients: Client[] = (clientsData as any) || []
       const audits: Audit[] = (auditsData as any) || []
+      const actions = actionsData || []
 
       if (!clients || !audits) return
+
+      // Calculate stage counts
+      const counts: Record<string, number> = { prospect: 0, mini: 0, full: 0, retainer: 0 }
+      clients.forEach(c => {
+        const stage = (c as any).stage || 'prospect'
+        if (counts[stage] !== undefined) counts[stage]++
+      })
+      setStageCounts(counts)
+
+      const pendingActions = actions.filter((a: any) => a.status !== 'done').length
+      const currentDate = new Date()
+      const overdueActions = actions.filter((a: any) => {
+        if (a.status === 'done' || !a.due_date) return false
+        return new Date(a.due_date) < currentDate
+      }).length
 
       // --- Process Logic ---
 
@@ -126,7 +148,9 @@ export default function DashboardPage() {
       setStats({
         totalClients: clients.length,
         avgEvs: totalEvsCount > 0 ? Math.round(totalEvsSum / totalEvsCount) : 0,
-        auditsThisMonth: auditsThisMonthCount
+        auditsThisMonth: auditsThisMonthCount,
+        pendingActions,
+        overdueActions
       })
 
       // D. Chart Data
@@ -177,7 +201,7 @@ export default function DashboardPage() {
       <Separator />
 
       {/* Metrics Cards */}
-      <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+      <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
             <CardTitle className="text-sm font-medium">Total Clientes</CardTitle>
@@ -208,7 +232,53 @@ export default function DashboardPage() {
             <p className="text-xs text-muted-foreground">Realizadas este mes</p>
           </CardContent>
         </Card>
+        <Card>
+          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+            <CardTitle className="text-sm font-medium">Acciones Pendientes</CardTitle>
+            <ListChecks className="h-4 w-4 text-muted-foreground" />
+          </CardHeader>
+          <CardContent>
+            <div className="text-2xl font-bold">{stats.pendingActions}</div>
+            {stats.overdueActions > 0 ? (
+              <p className="text-xs text-red-500 flex items-center gap-1">
+                <AlertTriangle className="h-3 w-3" /> {stats.overdueActions} vencidas
+              </p>
+            ) : (
+              <p className="text-xs text-muted-foreground">Todas al día ✓</p>
+            )}
+          </CardContent>
+        </Card>
       </div>
+
+      {/* Pipeline Visualization */}
+      <Card>
+        <CardHeader className="pb-2">
+          <CardTitle className="text-sm font-medium">Pipeline de Clientes</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <div className="flex items-center justify-between gap-2">
+            <div className="flex-1 text-center p-3 rounded-lg bg-yellow-50 dark:bg-yellow-950/30 border border-yellow-200 dark:border-yellow-800">
+              <div className="text-2xl font-bold text-yellow-700 dark:text-yellow-400">{stageCounts.prospect}</div>
+              <div className="text-xs text-muted-foreground">🟡 Prospect</div>
+            </div>
+            <div className="text-muted-foreground">→</div>
+            <div className="flex-1 text-center p-3 rounded-lg bg-blue-50 dark:bg-blue-950/30 border border-blue-200 dark:border-blue-800">
+              <div className="text-2xl font-bold text-blue-700 dark:text-blue-400">{stageCounts.mini}</div>
+              <div className="text-xs text-muted-foreground">🔵 Mini</div>
+            </div>
+            <div className="text-muted-foreground">→</div>
+            <div className="flex-1 text-center p-3 rounded-lg bg-green-50 dark:bg-green-950/30 border border-green-200 dark:border-green-800">
+              <div className="text-2xl font-bold text-green-700 dark:text-green-400">{stageCounts.full}</div>
+              <div className="text-xs text-muted-foreground">🟢 Full</div>
+            </div>
+            <div className="text-muted-foreground">→</div>
+            <div className="flex-1 text-center p-3 rounded-lg bg-purple-50 dark:bg-purple-950/30 border border-purple-200 dark:border-purple-800">
+              <div className="text-2xl font-bold text-purple-700 dark:text-purple-400">{stageCounts.retainer}</div>
+              <div className="text-xs text-muted-foreground">🟣 Retainer</div>
+            </div>
+          </div>
+        </CardContent>
+      </Card>
 
       <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-7">
 

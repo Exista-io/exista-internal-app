@@ -18,7 +18,7 @@ import { Separator } from '@/components/ui/separator'
 import { Badge } from '@/components/ui/badge'
 import { Plus, Trash2, ArrowLeft, Save, Loader2, Sparkles, Bot, FileText, Download, X, Eye, Archive, ListChecks, CheckCircle2, Clock, AlertCircle } from 'lucide-react'
 import { toast } from 'sonner'
-import { analyzeQuery, scanWebsite, suggestQueries, checkShareOfVoice, analyzeOffsiteQualitative, checkAllEngines, LLMCheckResult, detectIndustry, generateAuditReport, AuditReportData, archiveAudit, getAuditDetails, createAction, updateActionStatus, getActionsForClient, updateActionDetails, Action } from '@/app/actions'
+import { analyzeQuery, scanWebsite, suggestQueries, checkShareOfVoice, analyzeOffsiteQualitative, checkAllEngines, LLMCheckResult, detectIndustry, generateAuditReport, AuditReportData, archiveAudit, getAuditDetails, createAction, updateActionStatus, getActionsForClient, updateActionDetails, Action, updateClientStage, createManualAction } from '@/app/actions'
 import { SERVICE_LIMITS, AuditType, AIEngine } from '@/lib/service-limits'
 import { Switch } from '@/components/ui/switch'
 import { HelpTooltip } from '@/components/evs/help-tooltip'
@@ -79,6 +79,9 @@ export default function ClientDetailPage() {
     const [selectedActionForEdit, setSelectedActionForEdit] = useState<Action | null>(null)
     const [showActionEditModal, setShowActionEditModal] = useState(false)
     const [savingActionEdit, setSavingActionEdit] = useState(false)
+    // New action creation modal
+    const [showActionCreateModal, setShowActionCreateModal] = useState(false)
+    const [newActionForm, setNewActionForm] = useState({ title: '', description: '', ownerType: 'exista' as 'exista' | 'client' })
 
     const [scanning, setScanning] = useState(false)
     const [auditType, setAuditType] = useState<'mini' | 'full' | 'retainer'>('full')
@@ -547,7 +550,13 @@ export default function ClientDetailPage() {
 
             // Success
             toast.success(`Auditoría Guardada! Score EVS: ${evs.total}/100`)
-            fetchClientData() // Refresh refresh header and audit list if we had one
+
+            // Auto-update client stage based on audit type
+            if (client) {
+                await updateClientStage(client.id, auditType)
+            }
+
+            fetchClientData() // Refresh header and audit list
 
         } catch (e: unknown) {
             console.error('Save error:', e)
@@ -1308,6 +1317,20 @@ export default function ClientDetailPage() {
                                             <Download className="h-4 w-4" />
                                         </Button>
                                     )}
+                                    {lastAudit && (
+                                        <Button
+                                            variant="ghost"
+                                            size="sm"
+                                            className="h-8 w-8 p-0"
+                                            title="Agregar acción manual"
+                                            onClick={() => {
+                                                setNewActionForm({ title: '', description: '', ownerType: 'exista' })
+                                                setShowActionCreateModal(true)
+                                            }}
+                                        >
+                                            <Plus className="h-4 w-4" />
+                                        </Button>
+                                    )}
                                     {clientActions.length > 3 && (
                                         <Button
                                             variant="ghost"
@@ -1354,6 +1377,14 @@ export default function ClientDetailPage() {
                                                         <Badge variant="outline" className="text-[10px] shrink-0">
                                                             P{action.priority}
                                                         </Badge>
+                                                        {(action as any).owner_type && (
+                                                            <Badge
+                                                                variant={(action as any).owner_type === 'exista' ? 'default' : 'secondary'}
+                                                                className="text-[10px] shrink-0"
+                                                            >
+                                                                {(action as any).owner_type === 'exista' ? '🏢' : '👤'}
+                                                            </Badge>
+                                                        )}
                                                         <span className="font-medium text-sm truncate hover:underline">{action.title}</span>
                                                     </div>
                                                     <div className="text-xs text-muted-foreground mt-0.5 truncate">
@@ -2078,6 +2109,96 @@ export default function ClientDetailPage() {
                             >
                                 {savingActionEdit ? <Loader2 className="h-4 w-4 animate-spin mr-1" /> : <Save className="h-4 w-4 mr-1" />}
                                 Guardar
+                            </Button>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {/* Create Action Modal */}
+            {showActionCreateModal && (
+                <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
+                    <div className="bg-background rounded-lg shadow-2xl max-w-md w-full p-6">
+                        <div className="flex items-center justify-between mb-4">
+                            <h3 className="text-lg font-semibold flex items-center gap-2">
+                                <Plus className="h-5 w-5" />
+                                Nueva Acción
+                            </h3>
+                            <Button variant="ghost" size="sm" onClick={() => setShowActionCreateModal(false)}>
+                                <X className="h-4 w-4" />
+                            </Button>
+                        </div>
+
+                        <div className="space-y-4">
+                            <div>
+                                <Label className="text-xs">Título *</Label>
+                                <Input
+                                    className="mt-1"
+                                    placeholder="Título de la acción"
+                                    value={newActionForm.title}
+                                    onChange={(e) => setNewActionForm({ ...newActionForm, title: e.target.value })}
+                                />
+                            </div>
+
+                            <div>
+                                <Label className="text-xs">Descripción</Label>
+                                <textarea
+                                    className="mt-1 w-full min-h-[80px] rounded-md border border-input bg-background px-3 py-2 text-sm"
+                                    placeholder="Descripción de la tarea..."
+                                    value={newActionForm.description}
+                                    onChange={(e) => setNewActionForm({ ...newActionForm, description: e.target.value })}
+                                />
+                            </div>
+
+                            <div>
+                                <Label className="text-xs">Responsable</Label>
+                                <Select
+                                    value={newActionForm.ownerType}
+                                    onValueChange={(v) => setNewActionForm({ ...newActionForm, ownerType: v as 'exista' | 'client' })}
+                                >
+                                    <SelectTrigger className="mt-1">
+                                        <SelectValue />
+                                    </SelectTrigger>
+                                    <SelectContent>
+                                        <SelectItem value="exista">🏢 Exista (nosotros)</SelectItem>
+                                        <SelectItem value="client">👤 Cliente</SelectItem>
+                                    </SelectContent>
+                                </Select>
+                            </div>
+                        </div>
+
+                        <div className="flex justify-end gap-2 mt-6">
+                            <Button variant="outline" onClick={() => setShowActionCreateModal(false)}>
+                                Cancelar
+                            </Button>
+                            <Button
+                                disabled={!newActionForm.title.trim() || creatingAction}
+                                onClick={async () => {
+                                    if (!client || !lastAudit) return
+                                    setCreatingAction(true)
+                                    try {
+                                        const result = await createManualAction(client.id, lastAudit.id, {
+                                            title: newActionForm.title,
+                                            description: newActionForm.description,
+                                            ownerType: newActionForm.ownerType
+                                        })
+                                        if (result.success && result.action) {
+                                            setClientActions(prev => [...prev, result.action!])
+                                            toast.success(`Acción creada para ${newActionForm.ownerType === 'exista' ? 'Exista' : 'Cliente'}`)
+                                            setShowActionCreateModal(false)
+                                        } else {
+                                            toast.error('Error al crear acción')
+                                        }
+                                    } catch (e) {
+                                        console.error('Create action error:', e)
+                                        toast.error('Error al crear acción')
+                                    } finally {
+                                        setCreatingAction(false)
+                                    }
+                                }}
+                            >
+                                {creatingAction ? <Loader2 className="h-4 w-4 animate-spin mr-1" /> : <Plus className="h-4 w-4 mr-1" />}
+                                Crear Acción
                             </Button>
                         </div>
                     </div>
