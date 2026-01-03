@@ -43,6 +43,8 @@ export default function DashboardPage() {
   const [auditList, setAuditList] = useState<(Audit & { client_name: string })[]>([])
   const [distribution, setDistribution] = useState<{ name: string; value: number; color: string }[]>([])
   const [clientsWithEvolution, setClientsWithEvolution] = useState<ClientWithLatestAudit[]>([])
+  // Risk clients for alerts
+  const [riskClients, setRiskClients] = useState<{ id: string; name: string; reason: string }[]>([])
 
   useEffect(() => {
     fetchDashboardData()
@@ -143,6 +145,27 @@ export default function DashboardPage() {
       });
 
       setClientsWithEvolution(processedClients)
+
+      // Compute risk clients (EVS < 50 or no audit in 90+ days)
+      const riskNow = new Date()
+      const ninetyDaysAgo = new Date(riskNow.getTime() - 90 * 24 * 60 * 60 * 1000)
+      const risks: { id: string; name: string; reason: string }[] = []
+
+      processedClients.forEach(c => {
+        if (c.latestAudit) {
+          const score = c.latestAudit.score_total || 0
+          const auditDate = new Date(c.latestAudit.fecha)
+
+          if (score < 50) {
+            risks.push({ id: c.id, name: c.nombre, reason: `EVS ${score}/100 🔴` })
+          } else if (auditDate < ninetyDaysAgo) {
+            risks.push({ id: c.id, name: c.nombre, reason: 'Sin auditoría en +90 días' })
+          }
+        } else {
+          risks.push({ id: c.id, name: c.nombre, reason: 'Sin auditoría' })
+        }
+      })
+      setRiskClients(risks)
 
       // C. Stats
       setStats({
@@ -279,6 +302,35 @@ export default function DashboardPage() {
           </div>
         </CardContent>
       </Card>
+
+      {/* Risk Clients Alert */}
+      {riskClients.length > 0 && (
+        <Card className="border-red-200 dark:border-red-800 bg-red-50/50 dark:bg-red-950/20">
+          <CardHeader className="pb-2">
+            <CardTitle className="text-sm font-medium flex items-center gap-2 text-red-700 dark:text-red-400">
+              <AlertTriangle className="h-4 w-4" />
+              Clientes que Requieren Acción ({riskClients.length})
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="flex flex-wrap gap-2">
+              {riskClients.slice(0, 10).map(c => (
+                <a
+                  key={c.id}
+                  href={`/clients/${c.id}`}
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white dark:bg-gray-800 border border-red-200 dark:border-red-700 hover:border-red-400 dark:hover:border-red-500 transition-colors text-sm"
+                >
+                  <span className="font-medium">{c.name}</span>
+                  <span className="text-xs text-muted-foreground">({c.reason})</span>
+                </a>
+              ))}
+              {riskClients.length > 10 && (
+                <span className="text-xs text-muted-foreground self-center">+{riskClients.length - 10} más</span>
+              )}
+            </div>
+          </CardContent>
+        </Card>
+      )}
 
       <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-7">
 
