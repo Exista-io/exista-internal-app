@@ -83,11 +83,14 @@ export async function sendEmail(params: {
     subject: string
     htmlBody: string
     textBody?: string
+    senderName?: string
     tags?: Array<{ name: string; value: string }>
 }): Promise<SendEmailResult> {
     if (!RESEND_API_KEY) {
         return { success: false, error: 'RESEND_API_KEY not configured' }
     }
+
+    const fromName = params.senderName || SENDER_NAME
 
     try {
         const response = await fetch('https://api.resend.com/emails', {
@@ -97,7 +100,7 @@ export async function sendEmail(params: {
                 'Content-Type': 'application/json',
             },
             body: JSON.stringify({
-                from: `${SENDER_NAME} <${SENDER_EMAIL}>`,
+                from: `${fromName} <${SENDER_EMAIL}>`,
                 to: [params.to],
                 subject: params.subject,
                 html: params.htmlBody,

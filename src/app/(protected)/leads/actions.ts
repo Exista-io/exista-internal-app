@@ -675,13 +675,14 @@ export async function sendEmailToLead(
 }
 
 /**
- * Send custom email to a lead (with edited subject/body)
+ * Send custom email to a lead (with edited subject/body/sender)
  */
 export async function sendCustomEmailToLead(
     leadId: string,
     templateId: string,
     customSubject: string,
-    customBody: string
+    customBody: string,
+    senderName?: string
 ): Promise<{
     success: boolean;
     messageId?: string;
@@ -724,6 +725,7 @@ export async function sendCustomEmailToLead(
         subject: customSubject,
         htmlBody,
         textBody: customBody,
+        senderName: senderName,
         tags: [
             { name: 'lead_id', value: leadId },
             { name: 'template_id', value: templateId },
@@ -737,20 +739,20 @@ export async function sendCustomEmailToLead(
             action_type: 'email_failed',
             channel: 'email',
             template_id: templateId,
-            message_preview: customSubject,
+            message_preview: `Subject: ${customSubject}\n\n${customBody}`,
             success: false,
             error_message: result.error,
         })
         return { success: false, error: result.error }
     }
 
-    // Log success
+    // Log success with full email content
     await supabase.from('outreach_logs').insert({
         lead_id: leadId,
         action_type: 'email_sent',
         channel: 'email',
         template_id: templateId,
-        message_preview: customSubject,
+        message_preview: `De: ${senderName || 'Juan'}\nPara: ${lead.contact_email}\nAsunto: ${customSubject}\n\n${customBody}`,
         success: true,
     })
 

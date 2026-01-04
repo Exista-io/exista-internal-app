@@ -89,6 +89,7 @@ export default function LeadsPage() {
     const [sendingEmail, setSendingEmail] = useState(false)
     const [emailPreview, setEmailPreview] = useState<{ subject: string; body: string } | null>(null)
     const [loadingPreview, setLoadingPreview] = useState(false)
+    const [senderName, setSenderName] = useState('Juan')
 
     // Stats
     const stats = {
@@ -570,6 +571,21 @@ export default function LeadsPage() {
                             <strong>Destinatario:</strong> {emailingLead?.contact_email}
                         </div>
 
+                        {/* Sender Name */}
+                        <div className="grid gap-2">
+                            <Label htmlFor="sender-name">Remitente (nombre)</Label>
+                            <Input
+                                id="sender-name"
+                                value={senderName}
+                                onChange={(e) => setSenderName(e.target.value)}
+                                placeholder="Juan"
+                                className="max-w-xs"
+                            />
+                            <p className="text-xs text-muted-foreground">
+                                El email se enviará como: {senderName} &lt;juan@exista.io&gt;
+                            </p>
+                        </div>
+
                         {/* Template Selector */}
                         <div className="grid gap-2">
                             <Label>1. Seleccionar Template</Label>
@@ -655,7 +671,8 @@ export default function LeadsPage() {
                                         emailingLead.id,
                                         selectedTemplateId,
                                         emailPreview.subject,
-                                        emailPreview.body
+                                        emailPreview.body,
+                                        senderName
                                     )
                                     if (result.success) {
                                         alert('✅ Email enviado correctamente!')
