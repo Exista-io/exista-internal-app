@@ -4,7 +4,7 @@ import { useEffect, useState } from 'react'
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
 import { supabase } from '@/lib/supabase'
 import { Client, Audit } from '@/types/database'
-import { Users, Activity, CalendarDays, TrendingUp, TrendingDown, Minus, LogOut, ListChecks, AlertTriangle } from 'lucide-react'
+import { Users, Activity, CalendarDays, TrendingUp, TrendingDown, Minus, LogOut, ListChecks, AlertTriangle, Globe } from 'lucide-react'
 import {
   BarChart,
   Bar,
@@ -209,6 +209,12 @@ export default function DashboardPage() {
           <p className="text-muted-foreground mt-1">Resumen ejecutivo del performance de la cartera.</p>
         </div>
         <div className="flex gap-2">
+          <button
+            onClick={() => router.push('/leads')}
+            className="inline-flex items-center justify-center rounded-md text-sm font-medium ring-offset-background transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50 border border-input bg-background hover:bg-accent hover:text-accent-foreground h-10 px-4 py-2"
+          >
+            <Globe className="mr-2 h-4 w-4" /> Leads
+          </button>
           <button
             onClick={() => router.push('/clients')}
             className="inline-flex items-center justify-center rounded-md text-sm font-medium ring-offset-background transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50 bg-primary text-primary-foreground hover:bg-primary/90 h-10 px-4 py-2"

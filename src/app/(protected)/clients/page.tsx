@@ -2,7 +2,7 @@
 
 import { useEffect, useState, useCallback } from 'react'
 import Link from 'next/link'
-import { Plus, Eye, Search, Filter, Archive, ArrowLeft } from 'lucide-react'
+import { Plus, Eye, Search, Filter, Archive, ArrowLeft, Globe } from 'lucide-react'
 import { supabase } from '@/lib/supabase'
 import { Client, Audit } from '@/types/database'
 import { archiveClient } from '@/app/actions'
@@ -178,6 +178,11 @@ export default function ClientsPage() {
                     <Link href="/">
                         <Button variant="outline">
                             <ArrowLeft className="mr-2 h-4 w-4" /> Dashboard
+                        </Button>
+                    </Link>
+                    <Link href="/leads">
+                        <Button variant="outline">
+                            <Globe className="mr-2 h-4 w-4" /> Leads
                         </Button>
                     </Link>
                     <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
