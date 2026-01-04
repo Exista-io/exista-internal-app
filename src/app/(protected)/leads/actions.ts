@@ -486,3 +486,121 @@ export async function getHunterCredits(): Promise<{
 }> {
     return await getHunterAccountInfo()
 }
+
+/**
+ * Get all active email templates
+ */
+export async function getEmailTemplates(): Promise<{
+    success: boolean;
+    templates?: Array<{
+        id: string;
+        name: string;
+        subject: string;
+        template_type: string | null;
+    }>;
+    error?: string;
+}> {
+    const supabase = await createClient()
+
+    const { data, error } = await supabase
+        .from('email_templates')
+        .select('id, name, subject, template_type')
+        .eq('is_active', true)
+        .order('template_type')
+
+    if (error) {
+        return { success: false, error: error.message }
+    }
+
+    return { success: true, templates: data }
+}
+
+/**
+ * Send email to a lead using a template
+ */
+export async function sendEmailToLead(
+    leadId: string,
+    templateId: string
+): Promise<{
+    success: boolean;
+    messageId?: string;
+    error?: string;
+}> {
+    const supabase = await createClient()
+
+    // Get lead
+    const { data: lead, error: leadError } = await supabase
+        .from('leads')
+        .select('*')
+        .eq('id', leadId)
+        .single()
+
+    if (leadError || !lead) {
+        return { success: false, error: 'Lead not found' }
+    }
+
+    if (!lead.contact_email) {
+        return { success: false, error: 'Lead has no contact email' }
+    }
+
+    // Get template
+    const { data: template, error: templateError } = await supabase
+        .from('email_templates')
+        .select('*')
+        .eq('id', templateId)
+        .single()
+
+    if (templateError || !template) {
+        return { success: false, error: 'Template not found' }
+    }
+
+    // Send email via Resend
+    const { sendEmailWithTemplate } = await import('@/lib/email/resend')
+    const result = await sendEmailWithTemplate(lead, template)
+
+    if (!result.success) {
+        // Log failure
+        await supabase.from('outreach_logs').insert({
+            lead_id: leadId,
+            action_type: 'email_failed',
+            channel: 'email',
+            template_id: templateId,
+            message_preview: template.subject,
+            success: false,
+            error_message: result.error,
+        })
+        return { success: false, error: result.error }
+    }
+
+    // Log success
+    await supabase.from('outreach_logs').insert({
+        lead_id: leadId,
+        action_type: 'email_sent',
+        channel: 'email',
+        template_id: templateId,
+        message_preview: template.subject,
+        success: true,
+    })
+
+    // Update lead stats
+    await supabase
+        .from('leads')
+        .update({
+            emails_sent: (lead.emails_sent || 0) + 1,
+            last_email_at: new Date().toISOString(),
+            outreach_status: lead.outreach_status === 'new' || lead.outreach_status === 'qualified'
+                ? 'intro_sent'
+                : lead.outreach_status,
+            updated_at: new Date().toISOString(),
+        })
+        .eq('id', leadId)
+
+    // Update template usage
+    await supabase
+        .from('email_templates')
+        .update({ times_used: (template.times_used || 0) + 1 })
+        .eq('id', templateId)
+
+    revalidatePath('/leads')
+    return { success: true, messageId: result.messageId }
+}

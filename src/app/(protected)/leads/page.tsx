@@ -2,10 +2,10 @@
 
 import { useEffect, useState, useCallback } from 'react'
 import Link from 'next/link'
-import { Plus, Search, Filter, ArrowLeft, Globe, Users, Mail, Linkedin, Zap, Trash2, UserPlus, Loader2, Upload, Sparkles, Pencil, CheckSquare, Download } from 'lucide-react'
+import { Plus, Search, Filter, ArrowLeft, Globe, Users, Mail, Linkedin, Zap, Trash2, UserPlus, Loader2, Upload, Sparkles, Pencil, CheckSquare, Download, Send } from 'lucide-react'
 import { supabase } from '@/lib/supabase'
 import { Lead } from '@/types/database'
-import { scanLead, deleteLead, convertLeadToClient, enrichLeadWithHunter, bulkImportLeads, getHunterCredits, updateLead, bulkDeleteLeads, bulkUpdateStatus } from './actions'
+import { scanLead, deleteLead, convertLeadToClient, enrichLeadWithHunter, bulkImportLeads, getHunterCredits, updateLead, bulkDeleteLeads, bulkUpdateStatus, getEmailTemplates, sendEmailToLead } from './actions'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
@@ -80,6 +80,13 @@ export default function LeadsPage() {
         outreach_channel: 'email',
     })
     const [isSavingEdit, setIsSavingEdit] = useState(false)
+
+    // Email Dialog State
+    const [isEmailDialogOpen, setIsEmailDialogOpen] = useState(false)
+    const [emailingLead, setEmailingLead] = useState<Lead | null>(null)
+    const [emailTemplates, setEmailTemplates] = useState<Array<{ id: string; name: string; subject: string; template_type: string | null }>>([])
+    const [selectedTemplateId, setSelectedTemplateId] = useState<string>('')
+    const [sendingEmail, setSendingEmail] = useState(false)
 
     // Stats
     const stats = {
@@ -543,6 +550,76 @@ export default function LeadsPage() {
                 </DialogContent>
             </Dialog>
 
+            {/* Send Email Dialog */}
+            <Dialog open={isEmailDialogOpen} onOpenChange={(open) => {
+                setIsEmailDialogOpen(open)
+                if (!open) {
+                    setEmailingLead(null)
+                    setSelectedTemplateId('')
+                }
+            }}>
+                <DialogContent className="sm:max-w-[500px]">
+                    <DialogHeader>
+                        <DialogTitle>📧 Enviar Email a {emailingLead?.contact_name || emailingLead?.domain}</DialogTitle>
+                    </DialogHeader>
+                    <div className="grid gap-4 py-4">
+                        <div className="text-sm text-muted-foreground">
+                            <strong>Destinatario:</strong> {emailingLead?.contact_email}
+                        </div>
+                        <div className="grid gap-2">
+                            <Label>Seleccionar Template</Label>
+                            <Select
+                                value={selectedTemplateId}
+                                onValueChange={setSelectedTemplateId}
+                            >
+                                <SelectTrigger>
+                                    <SelectValue placeholder="Elegir template..." />
+                                </SelectTrigger>
+                                <SelectContent>
+                                    {emailTemplates.map(t => (
+                                        <SelectItem key={t.id} value={t.id}>
+                                            {t.name}
+                                        </SelectItem>
+                                    ))}
+                                </SelectContent>
+                            </Select>
+                            {selectedTemplateId && (
+                                <p className="text-xs text-muted-foreground">
+                                    <strong>Asunto:</strong> {emailTemplates.find(t => t.id === selectedTemplateId)?.subject}
+                                </p>
+                            )}
+                        </div>
+                        <div className="flex justify-end gap-2 pt-4">
+                            <Button variant="outline" onClick={() => setIsEmailDialogOpen(false)}>
+                                Cancelar
+                            </Button>
+                            <Button
+                                disabled={!selectedTemplateId || sendingEmail}
+                                onClick={async () => {
+                                    if (!emailingLead || !selectedTemplateId) return
+                                    setSendingEmail(true)
+                                    const result = await sendEmailToLead(emailingLead.id, selectedTemplateId)
+                                    if (result.success) {
+                                        alert('✅ Email enviado correctamente!')
+                                        setIsEmailDialogOpen(false)
+                                        fetchLeads()
+                                    } else {
+                                        alert('❌ Error: ' + result.error)
+                                    }
+                                    setSendingEmail(false)
+                                }}
+                            >
+                                {sendingEmail ? (
+                                    <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Enviando...</>
+                                ) : (
+                                    <><Send className="mr-2 h-4 w-4" /> Enviar Email</>
+                                )}
+                            </Button>
+                        </div>
+                    </div>
+                </DialogContent>
+            </Dialog>
+
             {/* Stats Cards */}
             <div className="grid gap-4 md:grid-cols-4 mb-6">
                 <Card>
@@ -823,6 +900,32 @@ export default function LeadsPage() {
                                                             </TooltipTrigger>
                                                             <TooltipContent>Editar</TooltipContent>
                                                         </Tooltip>
+                                                        {/* Send Email Button - only if has email */}
+                                                        {lead.contact_email && (
+                                                            <Tooltip>
+                                                                <TooltipTrigger asChild>
+                                                                    <Button
+                                                                        variant="ghost"
+                                                                        size="sm"
+                                                                        className="text-blue-600 hover:text-blue-700"
+                                                                        onClick={async () => {
+                                                                            // Fetch templates if not loaded
+                                                                            if (emailTemplates.length === 0) {
+                                                                                const result = await getEmailTemplates()
+                                                                                if (result.success && result.templates) {
+                                                                                    setEmailTemplates(result.templates)
+                                                                                }
+                                                                            }
+                                                                            setEmailingLead(lead)
+                                                                            setIsEmailDialogOpen(true)
+                                                                        }}
+                                                                    >
+                                                                        <Send className="h-3 w-3" />
+                                                                    </Button>
+                                                                </TooltipTrigger>
+                                                                <TooltipContent>Enviar Email</TooltipContent>
+                                                            </Tooltip>
+                                                        )}
                                                         {!lead.quick_scan_done && (
                                                             <Tooltip>
                                                                 <TooltipTrigger asChild>
