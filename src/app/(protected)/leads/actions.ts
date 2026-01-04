@@ -261,6 +261,87 @@ export async function deleteLead(leadId: string): Promise<{ success: boolean; er
 }
 
 /**
+ * Update lead information
+ */
+export async function updateLead(
+    leadId: string,
+    data: {
+        company_name?: string;
+        contact_name?: string;
+        contact_email?: string;
+        contact_role?: string;
+        linkedin_url?: string;
+        notes?: string;
+        outreach_channel?: string;
+    }
+): Promise<{ success: boolean; error?: string }> {
+    const supabase = await createClient()
+
+    const { error } = await supabase
+        .from('leads')
+        .update({
+            ...data,
+            updated_at: new Date().toISOString(),
+        })
+        .eq('id', leadId)
+
+    if (error) {
+        return { success: false, error: error.message }
+    }
+
+    revalidatePath('/leads')
+    return { success: true }
+}
+
+/**
+ * Bulk delete leads
+ */
+export async function bulkDeleteLeads(leadIds: string[]): Promise<{
+    success: boolean;
+    deleted: number;
+    error?: string;
+}> {
+    const supabase = await createClient()
+
+    const { error, count } = await supabase
+        .from('leads')
+        .delete()
+        .in('id', leadIds)
+
+    if (error) {
+        return { success: false, deleted: 0, error: error.message }
+    }
+
+    revalidatePath('/leads')
+    return { success: true, deleted: count || leadIds.length }
+}
+
+/**
+ * Bulk update lead status
+ */
+export async function bulkUpdateStatus(
+    leadIds: string[],
+    status: string
+): Promise<{ success: boolean; updated: number; error?: string }> {
+    const supabase = await createClient()
+
+    const { error, count } = await supabase
+        .from('leads')
+        .update({
+            outreach_status: status,
+            updated_at: new Date().toISOString()
+        })
+        .in('id', leadIds)
+
+    if (error) {
+        return { success: false, updated: 0, error: error.message }
+    }
+
+    revalidatePath('/leads')
+    return { success: true, updated: count || leadIds.length }
+}
+
+/**
  * Convert lead to client
  */
 export async function convertLeadToClient(leadId: string): Promise<{ success: boolean; clientId?: string; error?: string }> {
@@ -278,20 +359,24 @@ export async function convertLeadToClient(leadId: string): Promise<{ success: bo
     }
 
     // Create a new client
+    const insertData: Record<string, unknown> = {
+        nombre: lead.company_name || lead.domain,
+        dominio: `https://${lead.domain}`,
+        mercado: lead.market || 'AR',
+        competidores: [],
+    }
+
+    // Add optional fields if they exist in schema (phase9)
+    if (lead.notes) insertData.notes = lead.notes
+
     const { data: client, error: insertError } = await supabase
         .from('clients')
-        .insert({
-            nombre: lead.company_name || lead.domain,
-            dominio: `https://${lead.domain}`,
-            mercado: lead.market || 'AR',
-            competidores: [],
-            stage: 'prospect',
-            notes: lead.notes,
-        })
+        .insert(insertData)
         .select('id')
         .single()
 
     if (insertError || !client) {
+        console.error('Error creating client from lead:', insertError)
         return { success: false, error: insertError?.message || 'Failed to create client' }
     }
 
