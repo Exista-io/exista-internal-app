@@ -2,6 +2,7 @@
 
 import { createClient } from '@/lib/supabase/server'
 import { quickScanDomain, bulkQuickScan, QuickScanResult } from '@/lib/leads/quick-scan'
+import { hunterDomainSearch, getHunterAccountInfo } from '@/lib/leads/hunter'
 import { revalidatePath } from 'next/cache'
 
 /**
@@ -307,4 +308,96 @@ export async function convertLeadToClient(leadId: string): Promise<{ success: bo
     revalidatePath('/leads')
     revalidatePath('/clients')
     return { success: true, clientId: client.id }
+}
+
+/**
+ * Enrich a lead with Hunter.io data (optional, uses credits)
+ */
+export async function enrichLeadWithHunter(leadId: string): Promise<{
+    success: boolean;
+    error?: string;
+    contactFound?: boolean;
+}> {
+    const supabase = await createClient()
+
+    // Get the lead
+    const { data: lead, error: fetchError } = await supabase
+        .from('leads')
+        .select('domain')
+        .eq('id', leadId)
+        .single()
+
+    if (fetchError || !lead) {
+        return { success: false, error: 'Lead not found' }
+    }
+
+    // Call Hunter.io API
+    const result = await hunterDomainSearch(lead.domain)
+
+    if (result.error) {
+        return { success: false, error: result.error }
+    }
+
+    // Get the best contact from results (inline logic)
+    const seniorityOrder = ['c_suite', 'executive', 'vp', 'director', 'manager', 'senior', 'entry']
+    const departmentOrder = ['marketing', 'executive', 'sales', 'management', 'communication']
+
+    const sortedEmails = [...(result.emails || [])]
+        .filter(e => e.verification?.status === 'valid' || e.confidence >= 80)
+        .sort((a, b) => {
+            const aSeniority = seniorityOrder.indexOf(a.seniority || '') !== -1
+                ? seniorityOrder.indexOf(a.seniority || '') : 999
+            const bSeniority = seniorityOrder.indexOf(b.seniority || '') !== -1
+                ? seniorityOrder.indexOf(b.seniority || '') : 999
+            if (aSeniority !== bSeniority) return aSeniority - bSeniority
+
+            const aDept = departmentOrder.indexOf(a.department || '') !== -1
+                ? departmentOrder.indexOf(a.department || '') : 999
+            const bDept = departmentOrder.indexOf(b.department || '') !== -1
+                ? departmentOrder.indexOf(b.department || '') : 999
+            if (aDept !== bDept) return aDept - bDept
+
+            return b.confidence - a.confidence
+        })
+
+    const bestContact = sortedEmails[0] || null
+
+    if (!bestContact) {
+        return { success: true, contactFound: false }
+    }
+
+    // Update lead with Hunter data
+    const { error: updateError } = await supabase
+        .from('leads')
+        .update({
+            company_name: result.organization || undefined,
+            contact_name: bestContact.first_name && bestContact.last_name
+                ? `${bestContact.first_name} ${bestContact.last_name}`
+                : bestContact.first_name || undefined,
+            contact_email: bestContact.value,
+            contact_role: bestContact.position || undefined,
+            linkedin_url: bestContact.linkedin || undefined,
+            source: 'hunter',
+            updated_at: new Date().toISOString(),
+        })
+        .eq('id', leadId)
+
+    if (updateError) {
+        return { success: false, error: updateError.message }
+    }
+
+    revalidatePath('/leads')
+    return { success: true, contactFound: true }
+}
+
+/**
+ * Get Hunter.io remaining credits
+ */
+export async function getHunterCredits(): Promise<{
+    available: boolean;
+    remaining?: number;
+    used?: number;
+    error?: string;
+}> {
+    return await getHunterAccountInfo()
 }

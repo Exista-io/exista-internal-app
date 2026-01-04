@@ -2,10 +2,10 @@
 
 import { useEffect, useState, useCallback } from 'react'
 import Link from 'next/link'
-import { Plus, Search, Filter, ArrowLeft, Globe, Users, Mail, Linkedin, Zap, Trash2, UserPlus, Loader2 } from 'lucide-react'
+import { Plus, Search, Filter, ArrowLeft, Globe, Users, Mail, Linkedin, Zap, Trash2, UserPlus, Loader2, Upload, Sparkles } from 'lucide-react'
 import { supabase } from '@/lib/supabase'
 import { Lead } from '@/types/database'
-import { scanLead, deleteLead, convertLeadToClient } from './actions'
+import { scanLead, deleteLead, convertLeadToClient, enrichLeadWithHunter, bulkImportLeads, getHunterCredits } from './actions'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
@@ -52,6 +52,16 @@ export default function LeadsPage() {
     })
     const [isSubmitting, setIsSubmitting] = useState(false)
     const [scanningIds, setScanningIds] = useState<Set<string>>(new Set())
+    const [enrichingIds, setEnrichingIds] = useState<Set<string>>(new Set())
+
+    // Bulk Import State
+    const [isBulkImportOpen, setIsBulkImportOpen] = useState(false)
+    const [bulkDomainsText, setBulkDomainsText] = useState('')
+    const [bulkImporting, setBulkImporting] = useState(false)
+    const [bulkResult, setBulkResult] = useState<{ imported: number; skipped: number } | null>(null)
+
+    // Hunter Credits
+    const [hunterCredits, setHunterCredits] = useState<number | null>(null)
 
     // Stats
     const stats = {
@@ -80,6 +90,15 @@ export default function LeadsPage() {
     useEffect(() => {
         fetchLeads()
     }, [fetchLeads])
+
+    // Fetch Hunter credits on mount
+    useEffect(() => {
+        getHunterCredits().then(result => {
+            if (result.available && result.remaining !== undefined) {
+                setHunterCredits(result.remaining)
+            }
+        })
+    }, [])
 
     const handleCreateLead = async (e: React.FormEvent) => {
         e.preventDefault()
@@ -241,6 +260,72 @@ export default function LeadsPage() {
                                     </Button>
                                 </div>
                             </form>
+                        </DialogContent>
+                    </Dialog>
+
+                    {/* Bulk Import Dialog */}
+                    <Dialog open={isBulkImportOpen} onOpenChange={setIsBulkImportOpen}>
+                        <DialogTrigger asChild>
+                            <Button variant="outline">
+                                <Upload className="mr-2 h-4 w-4" /> Bulk Import
+                            </Button>
+                        </DialogTrigger>
+                        <DialogContent className="sm:max-w-[600px]">
+                            <DialogHeader>
+                                <DialogTitle>Importar Dominios en Bulk</DialogTitle>
+                            </DialogHeader>
+                            <div className="grid gap-4 py-4">
+                                <div className="space-y-2">
+                                    <Label>Pegar lista de dominios (uno por línea o separados por coma)</Label>
+                                    <Textarea
+                                        value={bulkDomainsText}
+                                        onChange={(e) => setBulkDomainsText(e.target.value)}
+                                        placeholder="ejemplo1.com&#10;ejemplo2.com&#10;ejemplo3.com"
+                                        rows={10}
+                                        className="font-mono text-sm"
+                                    />
+                                </div>
+                                {bulkResult && (
+                                    <div className="p-3 bg-green-50 dark:bg-green-900/20 rounded-md text-sm">
+                                        ✅ Importados: <strong>{bulkResult.imported}</strong> |
+                                        ⏭️ Duplicados: <strong>{bulkResult.skipped}</strong>
+                                    </div>
+                                )}
+                                <div className="flex justify-end gap-2">
+                                    <Button
+                                        variant="outline"
+                                        onClick={() => {
+                                            setIsBulkImportOpen(false)
+                                            setBulkDomainsText('')
+                                            setBulkResult(null)
+                                        }}
+                                    >
+                                        Cerrar
+                                    </Button>
+                                    <Button
+                                        disabled={bulkImporting || !bulkDomainsText.trim()}
+                                        onClick={async () => {
+                                            setBulkImporting(true)
+                                            // Parse domains from text
+                                            const domains = bulkDomainsText
+                                                .split(/[\n,;]+/)
+                                                .map(d => d.trim())
+                                                .filter(d => d.length > 0 && d.includes('.'))
+
+                                            const result = await bulkImportLeads(domains)
+                                            setBulkResult({ imported: result.imported, skipped: result.skipped })
+                                            setBulkImporting(false)
+                                            fetchLeads()
+                                        }}
+                                    >
+                                        {bulkImporting ? (
+                                            <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Importando...</>
+                                        ) : (
+                                            <>Importar {bulkDomainsText.split(/[\n,;]+/).filter(d => d.trim().includes('.')).length} dominios</>
+                                        )}
+                                    </Button>
+                                </div>
+                            </div>
                         </DialogContent>
                     </Dialog>
                 </div>
@@ -471,6 +556,43 @@ export default function LeadsPage() {
                                                                     </Button>
                                                                 </TooltipTrigger>
                                                                 <TooltipContent>Convertir a Cliente</TooltipContent>
+                                                            </Tooltip>
+                                                        )}
+                                                        {/* Enrich with Hunter - only if no contact email yet */}
+                                                        {!lead.contact_email && hunterCredits !== null && hunterCredits > 0 && (
+                                                            <Tooltip>
+                                                                <TooltipTrigger asChild>
+                                                                    <Button
+                                                                        variant="outline"
+                                                                        size="sm"
+                                                                        className="text-purple-600 border-purple-200 hover:bg-purple-50"
+                                                                        disabled={enrichingIds.has(lead.id)}
+                                                                        onClick={async () => {
+                                                                            setEnrichingIds(prev => new Set([...prev, lead.id]))
+                                                                            const result = await enrichLeadWithHunter(lead.id)
+                                                                            if (result.success) {
+                                                                                if (result.contactFound) {
+                                                                                    setHunterCredits(prev => prev !== null ? prev - 1 : null)
+                                                                                }
+                                                                                fetchLeads()
+                                                                            } else {
+                                                                                alert('Error: ' + result.error)
+                                                                            }
+                                                                            setEnrichingIds(prev => {
+                                                                                const next = new Set(prev)
+                                                                                next.delete(lead.id)
+                                                                                return next
+                                                                            })
+                                                                        }}
+                                                                    >
+                                                                        {enrichingIds.has(lead.id) ? (
+                                                                            <Loader2 className="h-3 w-3 animate-spin" />
+                                                                        ) : (
+                                                                            <Sparkles className="h-3 w-3" />
+                                                                        )}
+                                                                    </Button>
+                                                                </TooltipTrigger>
+                                                                <TooltipContent>Enriquecer con Hunter ({hunterCredits} créditos)</TooltipContent>
                                                             </Tooltip>
                                                         )}
                                                         <Button
