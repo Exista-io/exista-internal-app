@@ -2,10 +2,10 @@
 
 import { useEffect, useState, useCallback } from 'react'
 import Link from 'next/link'
-import { Plus, Search, Filter, ArrowLeft, Globe, Users, Mail, Linkedin, Zap, Trash2, UserPlus, Loader2, Upload, Sparkles, Pencil, CheckSquare, Download, Send } from 'lucide-react'
+import { Plus, Search, Filter, ArrowLeft, Globe, Users, Mail, Linkedin, Zap, Trash2, UserPlus, Loader2, Upload, Sparkles, Pencil, CheckSquare, Download, Send, History, Wand2 } from 'lucide-react'
 import { supabase } from '@/lib/supabase'
 import { Lead } from '@/types/database'
-import { scanLead, deleteLead, convertLeadToClient, enrichLeadWithHunter, bulkImportLeads, getHunterCredits, updateLead, bulkDeleteLeads, bulkUpdateStatus, getEmailTemplates, sendEmailToLead, getEmailPreview, sendCustomEmailToLead } from './actions'
+import { scanLead, deleteLead, convertLeadToClient, enrichLeadWithHunter, bulkImportLeads, getHunterCredits, updateLead, bulkDeleteLeads, bulkUpdateStatus, getEmailTemplates, sendEmailToLead, getEmailPreview, sendCustomEmailToLead, getLeadActivityLogs, improveEmailWithAI } from './actions'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
@@ -90,6 +90,21 @@ export default function LeadsPage() {
     const [emailPreview, setEmailPreview] = useState<{ subject: string; body: string } | null>(null)
     const [loadingPreview, setLoadingPreview] = useState(false)
     const [senderName, setSenderName] = useState('Juan')
+    const [improvingWithAI, setImprovingWithAI] = useState(false)
+
+    // History Modal State
+    const [isHistoryOpen, setIsHistoryOpen] = useState(false)
+    const [historyLead, setHistoryLead] = useState<Lead | null>(null)
+    const [activityLogs, setActivityLogs] = useState<Array<{
+        id: string;
+        action_type: string;
+        channel: string;
+        message_preview: string | null;
+        success: boolean;
+        error_message: string | null;
+        created_at: string;
+    }>>([])
+    const [loadingHistory, setLoadingHistory] = useState(false)
 
     // Stats
     const stats = {
@@ -654,6 +669,43 @@ export default function LeadsPage() {
                                 <p className="text-xs text-muted-foreground">
                                     💡 Podés editar el asunto y cuerpo antes de enviar. Los links [texto](url) se convertirán a HTML.
                                 </p>
+
+                                {/* AI Improve Button */}
+                                <Button
+                                    variant="outline"
+                                    size="sm"
+                                    disabled={improvingWithAI}
+                                    onClick={async () => {
+                                        if (!emailingLead || !emailPreview) return
+                                        setImprovingWithAI(true)
+                                        const result = await improveEmailWithAI(
+                                            emailPreview.subject,
+                                            emailPreview.body,
+                                            {
+                                                company_name: emailingLead.company_name || undefined,
+                                                contact_name: emailingLead.contact_name || undefined,
+                                                domain: emailingLead.domain,
+                                                quick_issues: emailingLead.quick_issues || undefined,
+                                            }
+                                        )
+                                        if (result.success && result.improved_subject && result.improved_body) {
+                                            setEmailPreview({
+                                                subject: result.improved_subject,
+                                                body: result.improved_body,
+                                            })
+                                        } else {
+                                            alert('Error: ' + (result.error || 'No se pudo mejorar'))
+                                        }
+                                        setImprovingWithAI(false)
+                                    }}
+                                    className="mt-2"
+                                >
+                                    {improvingWithAI ? (
+                                        <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Mejorando con IA...</>
+                                    ) : (
+                                        <><Wand2 className="mr-2 h-4 w-4" /> Mejorar con IA (Gemini)</>
+                                    )}
+                                </Button>
                             </div>
                         )}
 
@@ -692,6 +744,61 @@ export default function LeadsPage() {
                                 )}
                             </Button>
                         </div>
+                    </div>
+                </DialogContent>
+            </Dialog>
+
+            {/* History Modal */}
+            <Dialog open={isHistoryOpen} onOpenChange={(open) => {
+                setIsHistoryOpen(open)
+                if (!open) {
+                    setHistoryLead(null)
+                    setActivityLogs([])
+                }
+            }}>
+                <DialogContent className="sm:max-w-[700px] max-h-[80vh] overflow-y-auto">
+                    <DialogHeader>
+                        <DialogTitle>📋 Historial de Actividad: {historyLead?.domain}</DialogTitle>
+                    </DialogHeader>
+                    <div className="py-4">
+                        {loadingHistory ? (
+                            <div className="flex items-center justify-center p-8">
+                                <Loader2 className="h-6 w-6 animate-spin" />
+                                <span className="ml-2">Cargando historial...</span>
+                            </div>
+                        ) : activityLogs.length === 0 ? (
+                            <p className="text-center text-muted-foreground py-8">No hay actividad registrada</p>
+                        ) : (
+                            <div className="space-y-4">
+                                {activityLogs.map(log => (
+                                    <div key={log.id} className={`border rounded-lg p-4 ${log.success ? 'border-green-200 bg-green-50/50' : 'border-red-200 bg-red-50/50'}`}>
+                                        <div className="flex justify-between items-start mb-2">
+                                            <div className="flex items-center gap-2">
+                                                {log.action_type === 'email_sent' && <Send className="h-4 w-4 text-blue-500" />}
+                                                {log.action_type === 'email_opened' && <span>👁</span>}
+                                                {log.action_type === 'email_clicked' && <span>🔗</span>}
+                                                {log.action_type === 'email_failed' && <span>❌</span>}
+                                                {log.action_type === 'email_bounced' && <span>⚠️</span>}
+                                                <span className="font-medium">
+                                                    {log.action_type.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase())}
+                                                </span>
+                                            </div>
+                                            <span className="text-xs text-muted-foreground">
+                                                {new Date(log.created_at).toLocaleString()}
+                                            </span>
+                                        </div>
+                                        {log.message_preview && (
+                                            <pre className="text-xs bg-muted/50 p-3 rounded-md whitespace-pre-wrap font-mono max-h-48 overflow-y-auto">
+                                                {log.message_preview}
+                                            </pre>
+                                        )}
+                                        {log.error_message && (
+                                            <p className="text-xs text-red-600 mt-2">Error: {log.error_message}</p>
+                                        )}
+                                    </div>
+                                ))}
+                            </div>
+                        )}
                     </div>
                 </DialogContent>
             </Dialog>
@@ -1042,6 +1149,29 @@ export default function LeadsPage() {
                                                                 <TooltipContent>Enviar Email</TooltipContent>
                                                             </Tooltip>
                                                         )}
+                                                        {/* History Button */}
+                                                        <Tooltip>
+                                                            <TooltipTrigger asChild>
+                                                                <Button
+                                                                    variant="ghost"
+                                                                    size="sm"
+                                                                    className="text-purple-600 hover:text-purple-700"
+                                                                    onClick={async () => {
+                                                                        setHistoryLead(lead)
+                                                                        setIsHistoryOpen(true)
+                                                                        setLoadingHistory(true)
+                                                                        const result = await getLeadActivityLogs(lead.id)
+                                                                        if (result.success && result.logs) {
+                                                                            setActivityLogs(result.logs)
+                                                                        }
+                                                                        setLoadingHistory(false)
+                                                                    }}
+                                                                >
+                                                                    <History className="h-3 w-3" />
+                                                                </Button>
+                                                            </TooltipTrigger>
+                                                            <TooltipContent>Ver Historial</TooltipContent>
+                                                        </Tooltip>
                                                         {!lead.quick_scan_done && (
                                                             <Tooltip>
                                                                 <TooltipTrigger asChild>

@@ -778,3 +778,117 @@ export async function sendCustomEmailToLead(
     revalidatePath('/leads')
     return { success: true, messageId: result.messageId }
 }
+
+/**
+ * Get activity logs for a lead (for history modal)
+ */
+export async function getLeadActivityLogs(leadId: string): Promise<{
+    success: boolean;
+    logs?: Array<{
+        id: string;
+        action_type: string;
+        channel: string;
+        message_preview: string | null;
+        success: boolean;
+        error_message: string | null;
+        created_at: string;
+    }>;
+    error?: string;
+}> {
+    const supabase = await createClient()
+
+    const { data, error } = await supabase
+        .from('outreach_logs')
+        .select('id, action_type, channel, message_preview, success, error_message, created_at')
+        .eq('lead_id', leadId)
+        .order('created_at', { ascending: false })
+        .limit(50)
+
+    if (error) {
+        return { success: false, error: error.message }
+    }
+
+    return { success: true, logs: data }
+}
+
+/**
+ * Improve email with AI (Gemini) for maximum engagement
+ */
+export async function improveEmailWithAI(
+    subject: string,
+    body: string,
+    leadContext: {
+        company_name?: string;
+        contact_name?: string;
+        domain: string;
+        quick_issues?: string[];
+    }
+): Promise<{
+    success: boolean;
+    improved_subject?: string;
+    improved_body?: string;
+    error?: string;
+}> {
+    try {
+        const { generateText } = await import('ai')
+        const { google } = await import('@ai-sdk/google')
+
+        const model = google('gemini-3-flash-preview')
+
+        const prompt = `Sos un experto en cold email marketing B2B. Tu tarea es mejorar el siguiente email para MAXIMIZAR:
+1. Open rate (asunto cautivador, curiosidad)
+2. Click-through rate (CTA claro, urgencia sutil)
+3. Reply rate (pregunta específica, personalización)
+
+**Contexto del lead:**
+- Empresa: ${leadContext.company_name || leadContext.domain}
+- Contacto: ${leadContext.contact_name || 'Decisor'}
+- Dominio: ${leadContext.domain}
+- Problemas detectados: ${leadContext.quick_issues?.join(', ') || 'Optimización técnica'}
+
+**Email actual:**
+Asunto: ${subject}
+
+${body}
+
+**Instrucciones:**
+1. Mantené el tono profesional pero cercano
+2. Usá datos específicos del contexto
+3. El asunto debe generar curiosidad sin ser clickbait
+4. Incluí un solo CTA claro
+5. Máximo 150 palabras en el body
+6. Usá markdown para links
+
+**Respondé SOLO con este formato exacto:**
+ASUNTO: [nuevo asunto aquí]
+---
+[nuevo body del email aquí]`
+
+        const result = await generateText({
+            model,
+            prompt,
+        })
+
+        const text = result.text.trim()
+
+        // Parse response
+        const asuntoMatch = text.match(/ASUNTO:\s*([^\n]+)/)
+        const bodyMatch = text.split('---')[1]
+
+        if (!asuntoMatch || !bodyMatch) {
+            return { success: false, error: 'Could not parse AI response' }
+        }
+
+        return {
+            success: true,
+            improved_subject: asuntoMatch[1].trim(),
+            improved_body: bodyMatch.trim(),
+        }
+    } catch (error) {
+        console.error('AI improvement error:', error)
+        return {
+            success: false,
+            error: error instanceof Error ? error.message : 'AI error'
+        }
+    }
+}
