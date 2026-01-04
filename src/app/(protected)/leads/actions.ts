@@ -496,6 +496,7 @@ export async function getEmailTemplates(): Promise<{
         id: string;
         name: string;
         subject: string;
+        body_markdown: string;
         template_type: string | null;
     }>;
     error?: string;
@@ -504,7 +505,7 @@ export async function getEmailTemplates(): Promise<{
 
     const { data, error } = await supabase
         .from('email_templates')
-        .select('id, name, subject, template_type')
+        .select('id, name, subject, body_markdown, template_type')
         .eq('is_active', true)
         .order('template_type')
 
@@ -513,6 +514,74 @@ export async function getEmailTemplates(): Promise<{
     }
 
     return { success: true, templates: data }
+}
+
+/**
+ * Get email preview with variables replaced for a lead
+ */
+export async function getEmailPreview(
+    leadId: string,
+    templateId: string
+): Promise<{
+    success: boolean;
+    subject?: string;
+    body?: string;
+    error?: string;
+}> {
+    const supabase = await createClient()
+
+    // Get lead
+    const { data: lead, error: leadError } = await supabase
+        .from('leads')
+        .select('*')
+        .eq('id', leadId)
+        .single()
+
+    if (leadError || !lead) {
+        return { success: false, error: 'Lead not found' }
+    }
+
+    // Get template
+    const { data: template, error: templateError } = await supabase
+        .from('email_templates')
+        .select('*')
+        .eq('id', templateId)
+        .single()
+
+    if (templateError || !template) {
+        return { success: false, error: 'Template not found' }
+    }
+
+    // Replace variables using inline logic (same as resend.ts)
+    const CALENDLY_URL = process.env.CALENDLY_URL || 'https://calendly.com/exista'
+    const SENDER_NAME = process.env.RESEND_FROM_NAME || 'Juan'
+
+    const formatQuickIssues = (issues: string[]): string => {
+        if (issues.length === 0) return '• Optimización técnica pendiente'
+        return issues.slice(0, 3).map(issue => `• ${issue}`).join('\n')
+    }
+
+    const variables: Record<string, string> = {
+        '{{company_name}}': lead.company_name || lead.domain,
+        '{{contact_name}}': lead.contact_name || 'Equipo',
+        '{{domain}}': lead.domain,
+        '{{quick_issues}}': formatQuickIssues(lead.quick_issues || []),
+        '{{quick_issue_1}}': lead.quick_issues?.[0] || 'optimización técnica SEO',
+        '{{top_competitor}}': lead.top_competitor || 'tu competencia directa',
+        '{{calendly_link}}': CALENDLY_URL,
+        '{{sender_name}}': SENDER_NAME,
+        '{{evs_score}}': lead.evs_score?.toString() || 'pendiente',
+    }
+
+    let subject = template.subject
+    let body = template.body_markdown
+
+    for (const [key, value] of Object.entries(variables)) {
+        subject = subject.replaceAll(key, value)
+        body = body.replaceAll(key, value)
+    }
+
+    return { success: true, subject, body }
 }
 
 /**
@@ -599,6 +668,109 @@ export async function sendEmailToLead(
     await supabase
         .from('email_templates')
         .update({ times_used: (template.times_used || 0) + 1 })
+        .eq('id', templateId)
+
+    revalidatePath('/leads')
+    return { success: true, messageId: result.messageId }
+}
+
+/**
+ * Send custom email to a lead (with edited subject/body)
+ */
+export async function sendCustomEmailToLead(
+    leadId: string,
+    templateId: string,
+    customSubject: string,
+    customBody: string
+): Promise<{
+    success: boolean;
+    messageId?: string;
+    error?: string;
+}> {
+    const supabase = await createClient()
+
+    // Get lead
+    const { data: lead, error: leadError } = await supabase
+        .from('leads')
+        .select('*')
+        .eq('id', leadId)
+        .single()
+
+    if (leadError || !lead) {
+        return { success: false, error: 'Lead not found' }
+    }
+
+    if (!lead.contact_email) {
+        return { success: false, error: 'Lead has no contact email' }
+    }
+
+    // Send email via Resend with custom content
+    const { sendEmail } = await import('@/lib/email/resend')
+
+    // Convert markdown to HTML (simple conversion)
+    const htmlBody = customBody
+        .replace(/^### (.*$)/gim, '<h3>$1</h3>')
+        .replace(/^## (.*$)/gim, '<h2>$1</h2>')
+        .replace(/^# (.*$)/gim, '<h1>$1</h1>')
+        .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
+        .replace(/\*(.+?)\*/g, '<em>$1</em>')
+        .replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2">$1</a>')
+        .replace(/\n\n/g, '</p><p>')
+        .replace(/\n/g, '<br>')
+        .replace(/^(.+)$/, '<p>$1</p>')
+
+    const result = await sendEmail({
+        to: lead.contact_email,
+        subject: customSubject,
+        htmlBody,
+        textBody: customBody,
+        tags: [
+            { name: 'lead_id', value: leadId },
+            { name: 'template_id', value: templateId },
+            { name: 'custom', value: 'true' },
+        ],
+    })
+
+    if (!result.success) {
+        await supabase.from('outreach_logs').insert({
+            lead_id: leadId,
+            action_type: 'email_failed',
+            channel: 'email',
+            template_id: templateId,
+            message_preview: customSubject,
+            success: false,
+            error_message: result.error,
+        })
+        return { success: false, error: result.error }
+    }
+
+    // Log success
+    await supabase.from('outreach_logs').insert({
+        lead_id: leadId,
+        action_type: 'email_sent',
+        channel: 'email',
+        template_id: templateId,
+        message_preview: customSubject,
+        success: true,
+    })
+
+    // Update lead stats
+    await supabase
+        .from('leads')
+        .update({
+            emails_sent: (lead.emails_sent || 0) + 1,
+            last_email_at: new Date().toISOString(),
+            outreach_status: lead.outreach_status === 'new' || lead.outreach_status === 'qualified'
+                ? 'intro_sent'
+                : lead.outreach_status,
+            updated_at: new Date().toISOString(),
+        })
+        .eq('id', leadId)
+
+    // Update template usage
+    await supabase
+        .from('email_templates')
+        .update({ times_used: (await supabase.from('email_templates').select('times_used').eq('id', templateId).single()).data?.times_used + 1 || 1 })
         .eq('id', templateId)
 
     revalidatePath('/leads')

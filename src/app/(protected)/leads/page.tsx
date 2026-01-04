@@ -5,7 +5,7 @@ import Link from 'next/link'
 import { Plus, Search, Filter, ArrowLeft, Globe, Users, Mail, Linkedin, Zap, Trash2, UserPlus, Loader2, Upload, Sparkles, Pencil, CheckSquare, Download, Send } from 'lucide-react'
 import { supabase } from '@/lib/supabase'
 import { Lead } from '@/types/database'
-import { scanLead, deleteLead, convertLeadToClient, enrichLeadWithHunter, bulkImportLeads, getHunterCredits, updateLead, bulkDeleteLeads, bulkUpdateStatus, getEmailTemplates, sendEmailToLead } from './actions'
+import { scanLead, deleteLead, convertLeadToClient, enrichLeadWithHunter, bulkImportLeads, getHunterCredits, updateLead, bulkDeleteLeads, bulkUpdateStatus, getEmailTemplates, sendEmailToLead, getEmailPreview, sendCustomEmailToLead } from './actions'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
@@ -84,9 +84,11 @@ export default function LeadsPage() {
     // Email Dialog State
     const [isEmailDialogOpen, setIsEmailDialogOpen] = useState(false)
     const [emailingLead, setEmailingLead] = useState<Lead | null>(null)
-    const [emailTemplates, setEmailTemplates] = useState<Array<{ id: string; name: string; subject: string; template_type: string | null }>>([])
+    const [emailTemplates, setEmailTemplates] = useState<Array<{ id: string; name: string; subject: string; body_markdown: string; template_type: string | null }>>([])
     const [selectedTemplateId, setSelectedTemplateId] = useState<string>('')
     const [sendingEmail, setSendingEmail] = useState(false)
+    const [emailPreview, setEmailPreview] = useState<{ subject: string; body: string } | null>(null)
+    const [loadingPreview, setLoadingPreview] = useState(false)
 
     // Stats
     const stats = {
@@ -556,9 +558,10 @@ export default function LeadsPage() {
                 if (!open) {
                     setEmailingLead(null)
                     setSelectedTemplateId('')
+                    setEmailPreview(null)
                 }
             }}>
-                <DialogContent className="sm:max-w-[500px]">
+                <DialogContent className="sm:max-w-[700px] max-h-[90vh] overflow-y-auto">
                     <DialogHeader>
                         <DialogTitle>📧 Enviar Email a {emailingLead?.contact_name || emailingLead?.domain}</DialogTitle>
                     </DialogHeader>
@@ -566,11 +569,24 @@ export default function LeadsPage() {
                         <div className="text-sm text-muted-foreground">
                             <strong>Destinatario:</strong> {emailingLead?.contact_email}
                         </div>
+
+                        {/* Template Selector */}
                         <div className="grid gap-2">
-                            <Label>Seleccionar Template</Label>
+                            <Label>1. Seleccionar Template</Label>
                             <Select
                                 value={selectedTemplateId}
-                                onValueChange={setSelectedTemplateId}
+                                onValueChange={async (value) => {
+                                    setSelectedTemplateId(value)
+                                    setEmailPreview(null)
+                                    if (value && emailingLead) {
+                                        setLoadingPreview(true)
+                                        const result = await getEmailPreview(emailingLead.id, value)
+                                        if (result.success && result.subject && result.body) {
+                                            setEmailPreview({ subject: result.subject, body: result.body })
+                                        }
+                                        setLoadingPreview(false)
+                                    }
+                                }}
                             >
                                 <SelectTrigger>
                                     <SelectValue placeholder="Elegir template..." />
@@ -583,25 +599,68 @@ export default function LeadsPage() {
                                     ))}
                                 </SelectContent>
                             </Select>
-                            {selectedTemplateId && (
-                                <p className="text-xs text-muted-foreground">
-                                    <strong>Asunto:</strong> {emailTemplates.find(t => t.id === selectedTemplateId)?.subject}
-                                </p>
-                            )}
                         </div>
+
+                        {/* Preview Loading */}
+                        {loadingPreview && (
+                            <div className="flex items-center justify-center p-4">
+                                <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+                                <span className="ml-2 text-sm text-muted-foreground">Cargando preview...</span>
+                            </div>
+                        )}
+
+                        {/* Email Preview & Edit */}
+                        {emailPreview && !loadingPreview && (
+                            <div className="space-y-4 border rounded-lg p-4 bg-muted/30">
+                                <Label>2. Revisar y Editar Email</Label>
+
+                                <div className="space-y-2">
+                                    <Label htmlFor="email-subject" className="text-sm">Asunto</Label>
+                                    <Input
+                                        id="email-subject"
+                                        value={emailPreview.subject}
+                                        onChange={(e) => setEmailPreview({ ...emailPreview, subject: e.target.value })}
+                                        className="font-medium"
+                                    />
+                                </div>
+
+                                <div className="space-y-2">
+                                    <Label htmlFor="email-body" className="text-sm">Cuerpo del Email (Markdown)</Label>
+                                    <Textarea
+                                        id="email-body"
+                                        value={emailPreview.body}
+                                        onChange={(e) => setEmailPreview({ ...emailPreview, body: e.target.value })}
+                                        rows={12}
+                                        className="font-mono text-sm"
+                                    />
+                                </div>
+
+                                <p className="text-xs text-muted-foreground">
+                                    💡 Podés editar el asunto y cuerpo antes de enviar. Los links [texto](url) se convertirán a HTML.
+                                </p>
+                            </div>
+                        )}
+
                         <div className="flex justify-end gap-2 pt-4">
                             <Button variant="outline" onClick={() => setIsEmailDialogOpen(false)}>
                                 Cancelar
                             </Button>
                             <Button
-                                disabled={!selectedTemplateId || sendingEmail}
+                                disabled={!emailPreview || sendingEmail}
                                 onClick={async () => {
-                                    if (!emailingLead || !selectedTemplateId) return
+                                    if (!emailingLead || !selectedTemplateId || !emailPreview) return
                                     setSendingEmail(true)
-                                    const result = await sendEmailToLead(emailingLead.id, selectedTemplateId)
+                                    // Send with edited content
+                                    const result = await sendCustomEmailToLead(
+                                        emailingLead.id,
+                                        selectedTemplateId,
+                                        emailPreview.subject,
+                                        emailPreview.body
+                                    )
                                     if (result.success) {
                                         alert('✅ Email enviado correctamente!')
                                         setIsEmailDialogOpen(false)
+                                        setEmailPreview(null)
                                         fetchLeads()
                                     } else {
                                         alert('❌ Error: ' + result.error)
