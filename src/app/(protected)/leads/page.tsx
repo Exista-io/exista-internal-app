@@ -91,6 +91,8 @@ export default function LeadsPage() {
     const [loadingPreview, setLoadingPreview] = useState(false)
     const [senderName, setSenderName] = useState('Gaby')
     const [improvingWithAI, setImprovingWithAI] = useState(false)
+    const [emailAttachments, setEmailAttachments] = useState<Array<{ filename: string; content: string }>>([])
+    const [uploadingFile, setUploadingFile] = useState(false)
 
     // History Modal State
     const [isHistoryOpen, setIsHistoryOpen] = useState(false)
@@ -575,6 +577,7 @@ export default function LeadsPage() {
                     setEmailingLead(null)
                     setSelectedTemplateId('')
                     setEmailPreview(null)
+                    setEmailAttachments([])
                 }
             }}>
                 <DialogContent className="sm:max-w-[700px] max-h-[90vh] overflow-y-auto">
@@ -706,6 +709,65 @@ export default function LeadsPage() {
                                         <><Wand2 className="mr-2 h-4 w-4" /> Mejorar con IA (Gemini)</>
                                     )}
                                 </Button>
+
+                                {/* File Attachments */}
+                                <div className="mt-4 space-y-2">
+                                    <Label className="text-sm">Adjuntar archivos (opcional)</Label>
+                                    <div className="flex items-center gap-2">
+                                        <Input
+                                            type="file"
+                                            id="email-attachment"
+                                            className="max-w-xs"
+                                            disabled={uploadingFile}
+                                            onChange={async (e) => {
+                                                const file = e.target.files?.[0]
+                                                if (!file) return
+
+                                                if (file.size > 5 * 1024 * 1024) {
+                                                    alert('Archivo muy grande. Máximo 5MB.')
+                                                    return
+                                                }
+
+                                                setUploadingFile(true)
+                                                try {
+                                                    const reader = new FileReader()
+                                                    reader.onload = () => {
+                                                        const base64 = (reader.result as string).split(',')[1]
+                                                        setEmailAttachments([...emailAttachments, {
+                                                            filename: file.name,
+                                                            content: base64
+                                                        }])
+                                                    }
+                                                    reader.readAsDataURL(file)
+                                                } catch (error) {
+                                                    alert('Error al cargar archivo')
+                                                }
+                                                setUploadingFile(false)
+                                                e.target.value = '' // Reset input
+                                            }}
+                                        />
+                                        {uploadingFile && <Loader2 className="h-4 w-4 animate-spin" />}
+                                    </div>
+                                    {emailAttachments.length > 0 && (
+                                        <div className="flex flex-wrap gap-2 mt-2">
+                                            {emailAttachments.map((att, i) => (
+                                                <div key={i} className="flex items-center gap-1 bg-muted px-2 py-1 rounded text-sm">
+                                                    <span>📎 {att.filename}</span>
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => setEmailAttachments(emailAttachments.filter((_, idx) => idx !== i))}
+                                                        className="text-red-500 hover:text-red-700 ml-1"
+                                                    >
+                                                        ✕
+                                                    </button>
+                                                </div>
+                                            ))}
+                                        </div>
+                                    )}
+                                    <p className="text-xs text-muted-foreground">
+                                        Máximo 5MB por archivo. PDFs, imágenes, documentos.
+                                    </p>
+                                </div>
                             </div>
                         )}
 
@@ -718,18 +780,20 @@ export default function LeadsPage() {
                                 onClick={async () => {
                                     if (!emailingLead || !selectedTemplateId || !emailPreview) return
                                     setSendingEmail(true)
-                                    // Send with edited content
+                                    // Send with edited content and attachments
                                     const result = await sendCustomEmailToLead(
                                         emailingLead.id,
                                         selectedTemplateId,
                                         emailPreview.subject,
                                         emailPreview.body,
-                                        senderName
+                                        senderName,
+                                        emailAttachments.length > 0 ? emailAttachments : undefined
                                     )
                                     if (result.success) {
-                                        alert('✅ Email enviado correctamente!')
+                                        alert(`✅ Email enviado correctamente!${emailAttachments.length > 0 ? ` (con ${emailAttachments.length} adjunto/s)` : ''}`)
                                         setIsEmailDialogOpen(false)
                                         setEmailPreview(null)
+                                        setEmailAttachments([])
                                         fetchLeads()
                                     } else {
                                         alert('❌ Error: ' + result.error)

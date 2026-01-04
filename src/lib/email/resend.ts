@@ -85,6 +85,7 @@ export async function sendEmail(params: {
     textBody?: string
     senderName?: string
     tags?: Array<{ name: string; value: string }>
+    attachments?: Array<{ filename: string; content: string }> // base64 content
 }): Promise<SendEmailResult> {
     if (!RESEND_API_KEY) {
         return { success: false, error: 'RESEND_API_KEY not configured' }
@@ -106,6 +107,7 @@ export async function sendEmail(params: {
                 html: params.htmlBody,
                 text: params.textBody,
                 tags: params.tags,
+                attachments: params.attachments,
             }),
         })
 

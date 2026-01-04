@@ -682,7 +682,8 @@ export async function sendCustomEmailToLead(
     templateId: string,
     customSubject: string,
     customBody: string,
-    senderName?: string
+    senderName?: string,
+    attachments?: Array<{ filename: string; content: string }> // base64 content
 ): Promise<{
     success: boolean;
     messageId?: string;
@@ -726,6 +727,7 @@ export async function sendCustomEmailToLead(
         htmlBody,
         textBody: customBody,
         senderName: senderName,
+        attachments: attachments,
         tags: [
             { name: 'lead_id', value: leadId },
             { name: 'template_id', value: templateId },
