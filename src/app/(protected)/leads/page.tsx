@@ -847,6 +847,7 @@ export default function LeadsPage() {
                                     <TableHead>Quick Score</TableHead>
                                     <TableHead>Issues</TableHead>
                                     <TableHead>Canal</TableHead>
+                                    <TableHead>Email Stats</TableHead>
                                     <TableHead className="text-right">Acciones</TableHead>
                                 </TableRow>
                             </TableHeader>
@@ -930,6 +931,45 @@ export default function LeadsPage() {
                                                         <Linkedin className="h-4 w-4 text-blue-700" />
                                                     )}
                                                 </div>
+                                            </TableCell>
+                                            {/* Email Stats Column */}
+                                            <TableCell>
+                                                {lead.emails_sent > 0 ? (
+                                                    <Tooltip>
+                                                        <TooltipTrigger asChild>
+                                                            <div className="flex items-center gap-2 cursor-default">
+                                                                <div className="flex items-center text-xs">
+                                                                    <Send className="h-3 w-3 mr-1 text-blue-500" />
+                                                                    <span>{lead.emails_sent}</span>
+                                                                </div>
+                                                                {lead.email_opens > 0 && (
+                                                                    <div className="flex items-center text-xs text-green-600">
+                                                                        <span>👁 {lead.email_opens}</span>
+                                                                    </div>
+                                                                )}
+                                                                {lead.email_clicks > 0 && (
+                                                                    <div className="flex items-center text-xs text-purple-600">
+                                                                        <span>🔗 {lead.email_clicks}</span>
+                                                                    </div>
+                                                                )}
+                                                            </div>
+                                                        </TooltipTrigger>
+                                                        <TooltipContent>
+                                                            <div className="text-xs">
+                                                                <p>Enviados: {lead.emails_sent}</p>
+                                                                <p>Abiertos: {lead.email_opens}</p>
+                                                                <p>Clicks: {lead.email_clicks}</p>
+                                                                {lead.last_email_at && (
+                                                                    <p className="mt-1 text-muted-foreground">
+                                                                        Último: {new Date(lead.last_email_at).toLocaleDateString()}
+                                                                    </p>
+                                                                )}
+                                                            </div>
+                                                        </TooltipContent>
+                                                    </Tooltip>
+                                                ) : (
+                                                    <span className="text-muted-foreground text-xs">-</span>
+                                                )}
                                             </TableCell>
                                             <TableCell className="text-right">
                                                 <div className="flex gap-1 justify-end">
