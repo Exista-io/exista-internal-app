@@ -2,7 +2,7 @@
 
 import { useEffect, useState, useCallback } from 'react'
 import Link from 'next/link'
-import { Plus, Search, Filter, ArrowLeft, Globe, Users, Mail, Linkedin, Zap, Trash2, UserPlus, Loader2, Upload, Sparkles, Pencil, CheckSquare } from 'lucide-react'
+import { Plus, Search, Filter, ArrowLeft, Globe, Users, Mail, Linkedin, Zap, Trash2, UserPlus, Loader2, Upload, Sparkles, Pencil, CheckSquare, Download } from 'lucide-react'
 import { supabase } from '@/lib/supabase'
 import { Lead } from '@/types/database'
 import { scanLead, deleteLead, convertLeadToClient, enrichLeadWithHunter, bulkImportLeads, getHunterCredits, updateLead, bulkDeleteLeads, bulkUpdateStatus } from './actions'
@@ -169,6 +169,91 @@ export default function LeadsPage() {
         if (score <= 60) return { text: String(score), color: 'text-orange-500 font-bold' }
         if (score <= 80) return { text: String(score), color: 'text-yellow-600' }
         return { text: String(score), color: 'text-green-600' }
+    }
+
+    // Export leads to CSV for LinkedIn automation (Expandi, HeyReach, etc)
+    const exportLeadsToCSV = () => {
+        // Filter leads with LinkedIn URLs
+        const leadsToExport = selectedIds.size > 0
+            ? filteredLeads.filter(l => selectedIds.has(l.id))
+            : filteredLeads.filter(l => l.linkedin_url)
+
+        if (leadsToExport.length === 0) {
+            alert('No hay leads con LinkedIn URL para exportar. Usá Hunter.io para enriquecer primero.')
+            return
+        }
+
+        // CSV Header - Expandi compatible format
+        const headers = [
+            'LinkedIn URL',
+            'First Name',
+            'Last Name',
+            'Company',
+            'Email',
+            'Title',
+            'Domain',
+            'Quick Score',
+            'Issues',
+            'Custom Message'
+        ]
+
+        // Generate personalized message based on issues
+        const generateMessage = (lead: Lead) => {
+            const issues = lead.quick_issues || []
+            if (issues.length === 0) return ''
+
+            const issueHooks: Record<string, string> = {
+                'no-robots': 'Vi que no tienen robots.txt configurado',
+                'no-sitemap': 'Noté que falta un sitemap.xml',
+                'no-schema': 'Detecté que no tienen schema markup',
+                'no-canonical': 'Encontré issues con canonical URLs',
+                'no-llms': 'No están preparados para AI search (llms.txt)',
+            }
+
+            for (const issue of issues) {
+                for (const [key, hook] of Object.entries(issueHooks)) {
+                    if (issue.toLowerCase().includes(key.replace('-', ' ').replace('no ', ''))) {
+                        return hook
+                    }
+                }
+            }
+            return `Analicé ${lead.domain} y encontré ${issues.length} oportunidades de mejora`
+        }
+
+        // Build CSV rows
+        const rows = leadsToExport.map(lead => {
+            const names = (lead.contact_name || '').split(' ')
+            const firstName = names[0] || ''
+            const lastName = names.slice(1).join(' ') || ''
+
+            return [
+                lead.linkedin_url || '',
+                firstName,
+                lastName,
+                lead.company_name || '',
+                lead.contact_email || '',
+                lead.contact_role || '',
+                lead.domain,
+                lead.quick_score?.toString() || '',
+                (lead.quick_issues || []).join('; '),
+                generateMessage(lead)
+            ]
+        })
+
+        // Create CSV content
+        const csvContent = [
+            headers.join(','),
+            ...rows.map(row => row.map(cell => `"${(cell || '').replace(/"/g, '""')}"`).join(','))
+        ].join('\n')
+
+        // Download
+        const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' })
+        const url = URL.createObjectURL(blob)
+        const link = document.createElement('a')
+        link.href = url
+        link.download = `leads-linkedin-export-${new Date().toISOString().split('T')[0]}.csv`
+        link.click()
+        URL.revokeObjectURL(url)
     }
 
     return (
@@ -346,6 +431,15 @@ export default function LeadsPage() {
                             </div>
                         </DialogContent>
                     </Dialog>
+
+                    {/* Export LinkedIn CSV Button */}
+                    <Button
+                        variant="outline"
+                        onClick={exportLeadsToCSV}
+                        title="Exportar leads con LinkedIn URL a CSV para Expandi/HeyReach"
+                    >
+                        <Download className="mr-2 h-4 w-4" /> Export LinkedIn
+                    </Button>
                 </div>
             </div>
 
