@@ -597,7 +597,7 @@ export default function LeadsPage() {
                                 className="max-w-xs"
                             />
                             <p className="text-xs text-muted-foreground">
-                                El email se enviará como: {senderName} &lt;juan@exista.io&gt;
+                                El email se enviará como: {senderName} &lt;gaby@exista.io&gt;
                             </p>
                         </div>
 
