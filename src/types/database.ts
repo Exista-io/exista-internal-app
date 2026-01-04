@@ -74,6 +74,126 @@ export interface BacklogItem {
   created_at: string;
 }
 
+// Phase 10: Lead Generation & Outreach
+export type OutreachStatus =
+  | 'new' | 'scanned' | 'qualified' | 'disqualified'
+  | 'intro_sent' | 'intro_opened' | 'intro_replied'
+  | 'audit_sent' | 'audit_viewed'
+  | 'meeting_requested' | 'meeting_booked' | 'meeting_completed'
+  | 'proposal_sent' | 'converted' | 'lost' | 'cold';
+
+export type OutreachChannel = 'email' | 'linkedin' | 'both';
+
+export type LinkedInStatus =
+  | 'not_started' | 'profile_viewed' | 'connection_sent'
+  | 'connected' | 'message_sent' | 'replied';
+
+export type LeadSource =
+  | 'manual' | 'csv_import' | 'hunter' | 'apollo'
+  | 'linkedin_search' | 'tavily' | 'referral';
+
+export interface Lead {
+  id: string;
+  domain: string;
+  company_name?: string;
+  industry?: string;
+  market: string;
+  company_size?: string;
+  contact_name?: string;
+  contact_email?: string;
+  contact_role?: string;
+  contact_phone?: string;
+  linkedin_url?: string;
+  linkedin_profile_scraped: boolean;
+  quick_scan_done: boolean;
+  quick_scan_at?: string;
+  robots_ok?: boolean;
+  sitemap_ok?: boolean;
+  schema_ok?: boolean;
+  llms_txt_ok?: boolean;
+  canonical_ok?: boolean;
+  blocks_gptbot?: boolean;
+  quick_score?: number;
+  quick_issues?: string[];
+  mini_audit_done: boolean;
+  mini_audit_id?: string;
+  evs_score?: number;
+  top_competitor?: string;
+  outreach_status: OutreachStatus;
+  outreach_channel: OutreachChannel;
+  emails_sent: number;
+  email_opens: number;
+  email_clicks: number;
+  email_replies: number;
+  last_email_at?: string;
+  linkedin_status?: LinkedInStatus;
+  linkedin_connection_sent_at?: string;
+  linkedin_connected_at?: string;
+  last_linkedin_at?: string;
+  sequence_step: number;
+  sequence_started_at?: string;
+  next_action_at?: string;
+  next_action_type?: string;
+  converted_to_client_id?: string;
+  lost_reason?: string;
+  source: LeadSource;
+  tags?: string[];
+  notes?: string;
+  assigned_to?: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export type MeetingStatus =
+  | 'scheduled' | 'confirmed' | 'rescheduled'
+  | 'cancelled' | 'completed' | 'no_show';
+
+export interface Meeting {
+  id: string;
+  lead_id: string;
+  calendly_event_id?: string;
+  calendly_event_uri?: string;
+  scheduled_at: string;
+  duration_minutes: number;
+  meeting_type: string;
+  meeting_link?: string;
+  status: MeetingStatus;
+  outcome?: string;
+  outcome_notes?: string;
+  next_steps?: string;
+  created_at: string;
+}
+
+export type EmailTemplateType =
+  | 'intro' | 'follow_up_1' | 'follow_up_2' | 'break_up'
+  | 'audit_delivery' | 'meeting_request' | 'meeting_confirmation';
+
+export interface EmailTemplate {
+  id: string;
+  name: string;
+  subject: string;
+  body_markdown: string;
+  variables?: string[];
+  template_type?: EmailTemplateType;
+  times_used: number;
+  avg_open_rate?: number;
+  avg_reply_rate?: number;
+  is_active: boolean;
+  created_at: string;
+}
+
+export interface OutreachLog {
+  id: string;
+  lead_id: string;
+  action_type: string;
+  channel: string;
+  template_id?: string;
+  message_preview?: string;
+  success: boolean;
+  error_message?: string;
+  created_at: string;
+}
+
 export interface Database {
   public: {
     Tables: {
@@ -102,6 +222,26 @@ export interface Database {
         Insert: Omit<BacklogItem, 'id' | 'created_at'>;
         Update: Partial<Omit<BacklogItem, 'id' | 'created_at'>>;
       };
+      leads: {
+        Row: Lead;
+        Insert: Omit<Lead, 'id' | 'created_at' | 'updated_at'>;
+        Update: Partial<Omit<Lead, 'id' | 'created_at'>>;
+      };
+      meetings: {
+        Row: Meeting;
+        Insert: Omit<Meeting, 'id' | 'created_at'>;
+        Update: Partial<Omit<Meeting, 'id' | 'created_at'>>;
+      };
+      email_templates: {
+        Row: EmailTemplate;
+        Insert: Omit<EmailTemplate, 'id' | 'created_at'>;
+        Update: Partial<Omit<EmailTemplate, 'id' | 'created_at'>>;
+      };
+      outreach_logs: {
+        Row: OutreachLog;
+        Insert: Omit<OutreachLog, 'id' | 'created_at'>;
+        Update: Partial<Omit<OutreachLog, 'id' | 'created_at'>>;
+      };
     };
     Views: Record<string, never>;
     Functions: Record<string, never>;
@@ -109,3 +249,4 @@ export interface Database {
     CompositeTypes: Record<string, never>;
   };
 }
+
