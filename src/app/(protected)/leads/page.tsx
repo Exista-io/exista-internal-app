@@ -2,10 +2,10 @@
 
 import { useEffect, useState, useCallback } from 'react'
 import Link from 'next/link'
-import { Plus, Search, Filter, ArrowLeft, Globe, Users, Mail, Linkedin, Zap, Trash2, UserPlus, Loader2, Upload, Sparkles } from 'lucide-react'
+import { Plus, Search, Filter, ArrowLeft, Globe, Users, Mail, Linkedin, Zap, Trash2, UserPlus, Loader2, Upload, Sparkles, Pencil, CheckSquare } from 'lucide-react'
 import { supabase } from '@/lib/supabase'
 import { Lead } from '@/types/database'
-import { scanLead, deleteLead, convertLeadToClient, enrichLeadWithHunter, bulkImportLeads, getHunterCredits } from './actions'
+import { scanLead, deleteLead, convertLeadToClient, enrichLeadWithHunter, bulkImportLeads, getHunterCredits, updateLead, bulkDeleteLeads, bulkUpdateStatus } from './actions'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
@@ -62,6 +62,24 @@ export default function LeadsPage() {
 
     // Hunter Credits
     const [hunterCredits, setHunterCredits] = useState<number | null>(null)
+
+    // Bulk Selection State
+    const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
+    const [bulkActioning, setBulkActioning] = useState(false)
+
+    // Edit Modal State
+    const [editingLead, setEditingLead] = useState<Lead | null>(null)
+    const [isEditDialogOpen, setIsEditDialogOpen] = useState(false)
+    const [editForm, setEditForm] = useState({
+        company_name: '',
+        contact_name: '',
+        contact_email: '',
+        contact_role: '',
+        linkedin_url: '',
+        notes: '',
+        outreach_channel: 'email',
+    })
+    const [isSavingEdit, setIsSavingEdit] = useState(false)
 
     // Stats
     const stats = {
@@ -331,6 +349,106 @@ export default function LeadsPage() {
                 </div>
             </div>
 
+            {/* Edit Lead Dialog */}
+            <Dialog open={isEditDialogOpen} onOpenChange={setIsEditDialogOpen}>
+                <DialogContent className="sm:max-w-[500px]">
+                    <DialogHeader>
+                        <DialogTitle>Editar Lead: {editingLead?.domain}</DialogTitle>
+                    </DialogHeader>
+                    <form
+                        onSubmit={async (e) => {
+                            e.preventDefault()
+                            if (!editingLead) return
+                            setIsSavingEdit(true)
+                            const result = await updateLead(editingLead.id, editForm)
+                            if (result.success) {
+                                setIsEditDialogOpen(false)
+                                fetchLeads()
+                            } else {
+                                alert('Error: ' + result.error)
+                            }
+                            setIsSavingEdit(false)
+                        }}
+                        className="grid gap-4 py-4"
+                    >
+                        <div className="grid grid-cols-4 items-center gap-4">
+                            <Label className="text-right">Empresa</Label>
+                            <Input
+                                value={editForm.company_name}
+                                onChange={(e) => setEditForm({ ...editForm, company_name: e.target.value })}
+                                className="col-span-3"
+                            />
+                        </div>
+                        <div className="grid grid-cols-4 items-center gap-4">
+                            <Label className="text-right">Contacto</Label>
+                            <Input
+                                value={editForm.contact_name}
+                                onChange={(e) => setEditForm({ ...editForm, contact_name: e.target.value })}
+                                className="col-span-3"
+                            />
+                        </div>
+                        <div className="grid grid-cols-4 items-center gap-4">
+                            <Label className="text-right">Email</Label>
+                            <Input
+                                type="email"
+                                value={editForm.contact_email}
+                                onChange={(e) => setEditForm({ ...editForm, contact_email: e.target.value })}
+                                className="col-span-3"
+                            />
+                        </div>
+                        <div className="grid grid-cols-4 items-center gap-4">
+                            <Label className="text-right">Cargo</Label>
+                            <Input
+                                value={editForm.contact_role}
+                                onChange={(e) => setEditForm({ ...editForm, contact_role: e.target.value })}
+                                className="col-span-3"
+                            />
+                        </div>
+                        <div className="grid grid-cols-4 items-center gap-4">
+                            <Label className="text-right">LinkedIn</Label>
+                            <Input
+                                value={editForm.linkedin_url}
+                                onChange={(e) => setEditForm({ ...editForm, linkedin_url: e.target.value })}
+                                className="col-span-3"
+                            />
+                        </div>
+                        <div className="grid grid-cols-4 items-center gap-4">
+                            <Label className="text-right">Canal</Label>
+                            <Select
+                                value={editForm.outreach_channel}
+                                onValueChange={(v) => setEditForm({ ...editForm, outreach_channel: v })}
+                            >
+                                <SelectTrigger className="col-span-3">
+                                    <SelectValue />
+                                </SelectTrigger>
+                                <SelectContent>
+                                    <SelectItem value="email">📧 Email</SelectItem>
+                                    <SelectItem value="linkedin">💼 LinkedIn</SelectItem>
+                                    <SelectItem value="both">📧💼 Ambos</SelectItem>
+                                </SelectContent>
+                            </Select>
+                        </div>
+                        <div className="grid grid-cols-4 items-center gap-4">
+                            <Label className="text-right">Notas</Label>
+                            <Textarea
+                                value={editForm.notes}
+                                onChange={(e) => setEditForm({ ...editForm, notes: e.target.value })}
+                                className="col-span-3"
+                                rows={3}
+                            />
+                        </div>
+                        <div className="flex justify-end gap-2 pt-4">
+                            <Button type="button" variant="outline" onClick={() => setIsEditDialogOpen(false)}>
+                                Cancelar
+                            </Button>
+                            <Button type="submit" disabled={isSavingEdit}>
+                                {isSavingEdit ? 'Guardando...' : 'Guardar Cambios'}
+                            </Button>
+                        </div>
+                    </form>
+                </DialogContent>
+            </Dialog>
+
             {/* Stats Cards */}
             <div className="grid gap-4 md:grid-cols-4 mb-6">
                 <Card>
@@ -404,6 +522,60 @@ export default function LeadsPage() {
             </div>
 
             <Card>
+                {/* Bulk Action Bar */}
+                {selectedIds.size > 0 && (
+                    <div className="bg-blue-50 dark:bg-blue-900/20 border-b px-4 py-3 flex items-center justify-between">
+                        <span className="text-sm font-medium">
+                            {selectedIds.size} lead{selectedIds.size > 1 ? 's' : ''} seleccionado{selectedIds.size > 1 ? 's' : ''}
+                        </span>
+                        <div className="flex gap-2">
+                            <Select
+                                onValueChange={async (status) => {
+                                    setBulkActioning(true)
+                                    await bulkUpdateStatus([...selectedIds], status)
+                                    setSelectedIds(new Set())
+                                    fetchLeads()
+                                    setBulkActioning(false)
+                                }}
+                            >
+                                <SelectTrigger className="w-[160px] h-8 text-sm">
+                                    <SelectValue placeholder="Cambiar estado" />
+                                </SelectTrigger>
+                                <SelectContent>
+                                    {Object.entries(STATUS_CONFIG).map(([value, config]) => (
+                                        <SelectItem key={value} value={value}>
+                                            {config.emoji} {config.label}
+                                        </SelectItem>
+                                    ))}
+                                </SelectContent>
+                            </Select>
+                            <Button
+                                variant="destructive"
+                                size="sm"
+                                disabled={bulkActioning}
+                                onClick={async () => {
+                                    if (confirm(`¿Eliminar ${selectedIds.size} leads?`)) {
+                                        setBulkActioning(true)
+                                        await bulkDeleteLeads([...selectedIds])
+                                        setSelectedIds(new Set())
+                                        fetchLeads()
+                                        setBulkActioning(false)
+                                    }
+                                }}
+                            >
+                                {bulkActioning ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4 mr-1" />}
+                                Eliminar
+                            </Button>
+                            <Button
+                                variant="outline"
+                                size="sm"
+                                onClick={() => setSelectedIds(new Set())}
+                            >
+                                Cancelar
+                            </Button>
+                        </div>
+                    </div>
+                )}
                 <CardHeader>
                     <CardTitle>Listado de Leads</CardTitle>
                     <CardDescription>
@@ -425,6 +597,20 @@ export default function LeadsPage() {
                         <Table>
                             <TableHeader>
                                 <TableRow>
+                                    <TableHead className="w-10">
+                                        <input
+                                            type="checkbox"
+                                            className="rounded border-gray-300"
+                                            checked={selectedIds.size === filteredLeads.length && filteredLeads.length > 0}
+                                            onChange={(e) => {
+                                                if (e.target.checked) {
+                                                    setSelectedIds(new Set(filteredLeads.map(l => l.id)))
+                                                } else {
+                                                    setSelectedIds(new Set())
+                                                }
+                                            }}
+                                        />
+                                    </TableHead>
                                     <TableHead>Estado</TableHead>
                                     <TableHead>Dominio</TableHead>
                                     <TableHead>Contacto</TableHead>
@@ -438,7 +624,23 @@ export default function LeadsPage() {
                                 {filteredLeads.map((lead) => {
                                     const statusConfig = STATUS_CONFIG[lead.outreach_status] || STATUS_CONFIG.new
                                     return (
-                                        <TableRow key={lead.id}>
+                                        <TableRow key={lead.id} className={selectedIds.has(lead.id) ? 'bg-blue-50 dark:bg-blue-900/10' : ''}>
+                                            <TableCell>
+                                                <input
+                                                    type="checkbox"
+                                                    className="rounded border-gray-300"
+                                                    checked={selectedIds.has(lead.id)}
+                                                    onChange={(e) => {
+                                                        const next = new Set(selectedIds)
+                                                        if (e.target.checked) {
+                                                            next.add(lead.id)
+                                                        } else {
+                                                            next.delete(lead.id)
+                                                        }
+                                                        setSelectedIds(next)
+                                                    }}
+                                                />
+                                            </TableCell>
                                             <TableCell>
                                                 <Badge variant={statusConfig.variant} className="text-xs">
                                                     {statusConfig.emoji} {statusConfig.label}
@@ -502,6 +704,31 @@ export default function LeadsPage() {
                                             <TableCell className="text-right">
                                                 <div className="flex gap-1 justify-end">
                                                     <TooltipProvider>
+                                                        {/* Edit Button */}
+                                                        <Tooltip>
+                                                            <TooltipTrigger asChild>
+                                                                <Button
+                                                                    variant="ghost"
+                                                                    size="sm"
+                                                                    onClick={() => {
+                                                                        setEditingLead(lead)
+                                                                        setEditForm({
+                                                                            company_name: lead.company_name || '',
+                                                                            contact_name: lead.contact_name || '',
+                                                                            contact_email: lead.contact_email || '',
+                                                                            contact_role: lead.contact_role || '',
+                                                                            linkedin_url: lead.linkedin_url || '',
+                                                                            notes: lead.notes || '',
+                                                                            outreach_channel: lead.outreach_channel || 'email',
+                                                                        })
+                                                                        setIsEditDialogOpen(true)
+                                                                    }}
+                                                                >
+                                                                    <Pencil className="h-3 w-3" />
+                                                                </Button>
+                                                            </TooltipTrigger>
+                                                            <TooltipContent>Editar</TooltipContent>
+                                                        </Tooltip>
                                                         {!lead.quick_scan_done && (
                                                             <Tooltip>
                                                                 <TooltipTrigger asChild>
