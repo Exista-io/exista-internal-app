@@ -752,7 +752,7 @@ export async function sendCustomEmailToLead(
         action_type: 'email_sent',
         channel: 'email',
         template_id: templateId,
-        message_preview: `De: ${senderName || 'Juan'}\nPara: ${lead.contact_email}\nAsunto: ${customSubject}\n\n${customBody}`,
+        message_preview: `De: ${senderName || 'Gaby'}\nPara: ${lead.contact_email}\nAsunto: ${customSubject}\n\n${customBody}`,
         success: true,
     })
 

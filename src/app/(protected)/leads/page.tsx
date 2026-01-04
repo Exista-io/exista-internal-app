@@ -89,7 +89,7 @@ export default function LeadsPage() {
     const [sendingEmail, setSendingEmail] = useState(false)
     const [emailPreview, setEmailPreview] = useState<{ subject: string; body: string } | null>(null)
     const [loadingPreview, setLoadingPreview] = useState(false)
-    const [senderName, setSenderName] = useState('Juan')
+    const [senderName, setSenderName] = useState('Gaby')
     const [improvingWithAI, setImprovingWithAI] = useState(false)
 
     // History Modal State

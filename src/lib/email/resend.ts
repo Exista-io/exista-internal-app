@@ -6,8 +6,8 @@
 import { Lead, EmailTemplate } from '@/types/database'
 
 const RESEND_API_KEY = process.env.RESEND_API_KEY
-const SENDER_EMAIL = process.env.RESEND_FROM_EMAIL || 'juan@exista.io'
-const SENDER_NAME = process.env.RESEND_FROM_NAME || 'Juan'
+const SENDER_EMAIL = process.env.RESEND_FROM_EMAIL || 'gaby@exista.io'
+const SENDER_NAME = process.env.RESEND_FROM_NAME || 'Gaby'
 const CALENDLY_URL = process.env.CALENDLY_URL || 'https://calendly.com/exista'
 
 export interface SendEmailResult {
