@@ -958,7 +958,7 @@ export async function researchLead(leadId: string): Promise<{
 Be concise. Focus on information useful for B2B sales outreach. Respond ONLY with the JSON object.`
 
         const response = await perplexityClient.chat.completions.create({
-            model: 'llama-3.1-sonar-small-128k-online',
+            model: 'sonar',
             messages: [
                 {
                     role: 'system',
