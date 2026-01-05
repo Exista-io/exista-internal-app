@@ -5,7 +5,7 @@ import Link from 'next/link'
 import { Plus, Search, Filter, ArrowLeft, Globe, Users, Mail, Linkedin, Zap, Trash2, UserPlus, Loader2, Upload, Sparkles, Pencil, CheckSquare, Download, Send, History, Wand2 } from 'lucide-react'
 import { supabase } from '@/lib/supabase'
 import { Lead } from '@/types/database'
-import { scanLead, deleteLead, convertLeadToClient, enrichLeadWithHunter, bulkImportLeads, getHunterCredits, updateLead, bulkDeleteLeads, bulkUpdateStatus, getEmailTemplates, sendEmailToLead, getEmailPreview, sendCustomEmailToLead, getLeadActivityLogs, improveEmailWithAI, researchLead, bulkResearchLeads, deepScanLead } from './actions'
+import { scanLead, deleteLead, convertLeadToClient, enrichLeadWithHunter, bulkImportLeads, getHunterCredits, updateLead, bulkDeleteLeads, bulkUpdateStatus, getEmailTemplates, sendEmailToLead, getEmailPreview, sendCustomEmailToLead, getLeadActivityLogs, improveEmailWithAI, researchLead, bulkResearchLeads, deepScanLead, generateLinkedInMessage, exportLeadsToCSV } from './actions'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
@@ -110,6 +110,13 @@ export default function LeadsPage() {
     }>>([])
     const [loadingHistory, setLoadingHistory] = useState(false)
 
+    // LinkedIn Dialog State
+    const [isLinkedInDialogOpen, setIsLinkedInDialogOpen] = useState(false)
+    const [linkedInLead, setLinkedInLead] = useState<Lead | null>(null)
+    const [linkedInMessage, setLinkedInMessage] = useState('')
+    const [generatingLinkedIn, setGeneratingLinkedIn] = useState(false)
+    const [linkedInMessageType, setLinkedInMessageType] = useState<'connection' | 'followup' | 'pitch'>('connection')
+
     // Stats
     const stats = {
         total: leads.length,
@@ -201,7 +208,7 @@ export default function LeadsPage() {
     }
 
     // Export leads to CSV for LinkedIn automation (Expandi, HeyReach, etc)
-    const exportLeadsToCSV = () => {
+    const exportLeadsToCSVLocal = () => {
         // Filter leads with LinkedIn URLs
         const leadsToExport = selectedIds.size > 0
             ? filteredLeads.filter(l => selectedIds.has(l.id))
@@ -464,7 +471,7 @@ export default function LeadsPage() {
                     {/* Export LinkedIn CSV Button */}
                     <Button
                         variant="outline"
-                        onClick={exportLeadsToCSV}
+                        onClick={exportLeadsToCSVLocal}
                         title="Exportar leads con LinkedIn URL a CSV para Expandi/HeyReach"
                     >
                         <Download className="mr-2 h-4 w-4" /> Export LinkedIn
@@ -830,6 +837,99 @@ export default function LeadsPage() {
                 </DialogContent>
             </Dialog>
 
+            {/* LinkedIn Message Dialog */}
+            <Dialog open={isLinkedInDialogOpen} onOpenChange={(open) => {
+                setIsLinkedInDialogOpen(open)
+                if (!open) {
+                    setLinkedInLead(null)
+                    setLinkedInMessage('')
+                }
+            }}>
+                <DialogContent className="sm:max-w-[600px]">
+                    <DialogHeader>
+                        <DialogTitle>💼 Mensaje LinkedIn: {linkedInLead?.contact_name || linkedInLead?.domain}</DialogTitle>
+                    </DialogHeader>
+                    <div className="space-y-4">
+                        <div className="flex gap-2">
+                            <Button
+                                variant={linkedInMessageType === 'connection' ? 'default' : 'outline'}
+                                size="sm"
+                                onClick={() => setLinkedInMessageType('connection')}
+                            >
+                                🤝 Conexión
+                            </Button>
+                            <Button
+                                variant={linkedInMessageType === 'followup' ? 'default' : 'outline'}
+                                size="sm"
+                                onClick={() => setLinkedInMessageType('followup')}
+                            >
+                                💬 Seguimiento
+                            </Button>
+                            <Button
+                                variant={linkedInMessageType === 'pitch' ? 'default' : 'outline'}
+                                size="sm"
+                                onClick={() => setLinkedInMessageType('pitch')}
+                            >
+                                🎯 Pitch
+                            </Button>
+                        </div>
+
+                        <Button
+                            className="w-full"
+                            disabled={generatingLinkedIn || !linkedInLead}
+                            onClick={async () => {
+                                if (!linkedInLead) return
+                                setGeneratingLinkedIn(true)
+                                const result = await generateLinkedInMessage(linkedInLead.id, linkedInMessageType)
+                                if (result.success && result.message) {
+                                    setLinkedInMessage(result.message)
+                                } else {
+                                    alert('Error: ' + (result.error || 'No se pudo generar'))
+                                }
+                                setGeneratingLinkedIn(false)
+                            }}
+                        >
+                            {generatingLinkedIn ? (
+                                <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Generando...</>
+                            ) : (
+                                <><Wand2 className="mr-2 h-4 w-4" /> Generar mensaje</>
+                            )}
+                        </Button>
+
+                        {linkedInMessage && (
+                            <div className="space-y-2">
+                                <div className="p-4 bg-muted rounded-lg whitespace-pre-wrap text-sm">
+                                    {linkedInMessage}
+                                </div>
+                                <div className="flex gap-2">
+                                    <Button
+                                        className="flex-1"
+                                        variant="outline"
+                                        onClick={() => {
+                                            navigator.clipboard.writeText(linkedInMessage)
+                                            alert('✅ Copiado al portapapeles!')
+                                        }}
+                                    >
+                                        📋 Copiar mensaje
+                                    </Button>
+                                    {linkedInLead?.linkedin_url && (
+                                        <Button
+                                            className="flex-1"
+                                            variant="default"
+                                            onClick={() => {
+                                                window.open(linkedInLead.linkedin_url!, '_blank')
+                                            }}
+                                        >
+                                            <Linkedin className="mr-2 h-4 w-4" /> Abrir LinkedIn
+                                        </Button>
+                                    )}
+                                </div>
+                            </div>
+                        )}
+                    </div>
+                </DialogContent>
+            </Dialog>
+
             {/* History Modal */}
             <Dialog open={isHistoryOpen} onOpenChange={(open) => {
                 setIsHistoryOpen(open)
@@ -1001,6 +1101,31 @@ export default function LeadsPage() {
                             >
                                 {bulkActioning ? <Loader2 className="h-4 w-4 animate-spin" /> : <Search className="h-4 w-4 mr-1" />}
                                 Investigar
+                            </Button>
+                            <Button
+                                variant="outline"
+                                size="sm"
+                                disabled={bulkActioning}
+                                onClick={async () => {
+                                    setBulkActioning(true)
+                                    const result = await exportLeadsToCSV([...selectedIds])
+                                    if (result.success && result.csv && result.filename) {
+                                        // Download CSV
+                                        const blob = new Blob([result.csv], { type: 'text/csv' })
+                                        const url = URL.createObjectURL(blob)
+                                        const a = document.createElement('a')
+                                        a.href = url
+                                        a.download = result.filename
+                                        a.click()
+                                        URL.revokeObjectURL(url)
+                                    } else {
+                                        alert('Error: ' + (result.error || 'Export failed'))
+                                    }
+                                    setBulkActioning(false)
+                                }}
+                            >
+                                {bulkActioning ? <Loader2 className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4 mr-1" />}
+                                Exportar CSV
                             </Button>
                             <Button
                                 variant="destructive"
@@ -1246,6 +1371,27 @@ export default function LeadsPage() {
                                                                     </Button>
                                                                 </TooltipTrigger>
                                                                 <TooltipContent>Enviar Email</TooltipContent>
+                                                            </Tooltip>
+                                                        )}
+                                                        {/* LinkedIn Button */}
+                                                        {lead.linkedin_url && (
+                                                            <Tooltip>
+                                                                <TooltipTrigger asChild>
+                                                                    <Button
+                                                                        variant="ghost"
+                                                                        size="sm"
+                                                                        className="text-blue-600 hover:text-blue-700"
+                                                                        onClick={() => {
+                                                                            setLinkedInLead(lead)
+                                                                            setLinkedInMessage('')
+                                                                            setLinkedInMessageType('connection')
+                                                                            setIsLinkedInDialogOpen(true)
+                                                                        }}
+                                                                    >
+                                                                        <Linkedin className="h-3 w-3" />
+                                                                    </Button>
+                                                                </TooltipTrigger>
+                                                                <TooltipContent>Generar mensaje LinkedIn</TooltipContent>
                                                             </Tooltip>
                                                         )}
                                                         {/* History Button */}

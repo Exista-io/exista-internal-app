@@ -1180,3 +1180,149 @@ export async function deepScanLead(leadId: string): Promise<{
         }
     }
 }
+
+/**
+ * Generate a personalized LinkedIn message using AI
+ * Uses all available research context for personalization
+ */
+export async function generateLinkedInMessage(
+    leadId: string,
+    messageType: 'connection' | 'followup' | 'pitch'
+): Promise<{
+    success: boolean;
+    message?: string;
+    error?: string;
+}> {
+    const supabase = await createClient()
+
+    // Get lead with all context
+    const { data: lead, error: leadError } = await supabase
+        .from('leads')
+        .select('*')
+        .eq('id', leadId)
+        .single()
+
+    if (leadError || !lead) {
+        return { success: false, error: 'Lead not found' }
+    }
+
+    try {
+        const { generateText } = await import('ai')
+        const { google } = await import('@ai-sdk/google')
+
+        const model = google('gemini-2.0-flash')
+
+        // Build context
+        const contextParts = []
+        contextParts.push(`- Empresa: ${lead.company_name || lead.domain}`)
+        if (lead.contact_name) contextParts.push(`- Contacto: ${lead.contact_name}`)
+        if (lead.contact_role) contextParts.push(`- Rol: ${lead.contact_role}`)
+        if (lead.company_description) contextParts.push(`- Qué hacen: ${lead.company_description}`)
+        if (lead.company_industry) contextParts.push(`- Industria: ${lead.company_industry}`)
+        if (lead.company_stage) contextParts.push(`- Stage: ${lead.company_stage}`)
+        if (lead.recent_news) contextParts.push(`- Noticia reciente: ${lead.recent_news}`)
+        if (lead.pain_points?.length) contextParts.push(`- Pain points: ${lead.pain_points.join(', ')}`)
+        if (lead.evs_score_estimate) contextParts.push(`- EVS Score: ${lead.evs_score_estimate}/100`)
+
+        const typeInstructions = {
+            connection: `Generá un mensaje de conexión de LinkedIn (máximo 300 caracteres).
+- Mencioná algo específico sobre su empresa o rol
+- No vendas nada, solo buscá conectar
+- Tono casual pero profesional`,
+            followup: `Generá un mensaje de seguimiento de LinkedIn (máximo 500 caracteres).
+- Asumí que ya están conectados
+- Mencioná valor que podés aportar
+- Pregunta abierta para iniciar conversación`,
+            pitch: `Generá un mensaje de pitch corto de LinkedIn (máximo 500 caracteres).
+- Mencioná un problema específico que detectaste (pain points, EVS bajo)
+- Ofrecé una solución concreta
+- CTA claro (llamada, demo, reporte)`
+        }
+
+        const prompt = `Sos un experto en LinkedIn outreach B2B. Generá un mensaje personalizado.
+
+**Contexto del lead:**
+${contextParts.join('\n')}
+
+**Tipo de mensaje:** ${messageType}
+${typeInstructions[messageType]}
+
+**REGLAS ESTRICTAS:**
+- NUNCA inventes datos que no estén en el contexto
+- Usá solo la información provista
+- El mensaje debe sentirse genuino, no genérico
+- Si es "connection", NO vendas nada
+
+**Respondé SOLO con el mensaje, sin explicación ni formato adicional.**`
+
+        const result = await generateText({
+            model,
+            prompt,
+        })
+
+        return {
+            success: true,
+            message: result.text.trim()
+        }
+    } catch (error) {
+        console.error('LinkedIn message generation error:', error)
+        return {
+            success: false,
+            error: error instanceof Error ? error.message : 'Generation failed'
+        }
+    }
+}
+
+/**
+ * Export leads to CSV for Expandi or other LinkedIn automation tools
+ */
+export async function exportLeadsToCSV(leadIds: string[]): Promise<{
+    success: boolean;
+    csv?: string;
+    filename?: string;
+    error?: string;
+}> {
+    const supabase = await createClient()
+
+    const { data: leads, error } = await supabase
+        .from('leads')
+        .select('*')
+        .in('id', leadIds)
+
+    if (error || !leads) {
+        return { success: false, error: 'Failed to fetch leads' }
+    }
+
+    // CSV headers for Expandi format
+    const headers = [
+        'LinkedIn URL',
+        'First Name',
+        'Last Name',
+        'Company',
+        'Title',
+        'Email',
+        'Custom Message'
+    ]
+
+    const rows = leads.map(lead => {
+        const [firstName, ...lastNameParts] = (lead.contact_name || '').split(' ')
+        return [
+            lead.linkedin_url || '',
+            firstName || '',
+            lastNameParts.join(' ') || '',
+            lead.company_name || lead.domain,
+            lead.contact_role || '',
+            lead.contact_email || '',
+            '' // Custom message to be filled by user or AI
+        ].map(field => `"${String(field).replace(/"/g, '""')}"`)
+    })
+
+    const csv = [headers.join(','), ...rows.map(r => r.join(','))].join('\n')
+    const filename = `leads-linkedin-export-${new Date().toISOString().split('T')[0]}.csv`
+
+    return {
+        success: true,
+        csv,
+        filename
+    }
+}
