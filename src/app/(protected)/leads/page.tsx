@@ -2,10 +2,11 @@
 
 import { useEffect, useState, useCallback } from 'react'
 import Link from 'next/link'
-import { Plus, Search, Filter, ArrowLeft, Globe, Users, Mail, Linkedin, Zap, Trash2, UserPlus, Loader2, Upload, Sparkles, Pencil, CheckSquare, Download, Send, History, Wand2 } from 'lucide-react'
+import { Plus, Search, Filter, ArrowLeft, Globe, Users, Mail, Linkedin, Zap, Trash2, UserPlus, Loader2, Upload, Sparkles, Pencil, CheckSquare, Download, Send, History, Wand2, ListTodo } from 'lucide-react'
 import { supabase } from '@/lib/supabase'
-import { Lead } from '@/types/database'
+import { Lead, Cadence } from '@/types/database'
 import { scanLead, deleteLead, convertLeadToClient, enrichLeadWithHunter, bulkImportLeads, getHunterCredits, updateLead, bulkDeleteLeads, bulkUpdateStatus, getEmailTemplates, sendEmailToLead, getEmailPreview, sendCustomEmailToLead, getLeadActivityLogs, improveEmailWithAI, researchLead, bulkResearchLeads, deepScanLead, generateLinkedInMessage, exportLeadsToCSV, researchPerson } from './actions'
+import { getCadences, bulkAssignToCadence } from '../cadences/actions'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
@@ -118,6 +119,10 @@ export default function LeadsPage() {
     const [linkedInMessageType, setLinkedInMessageType] = useState<'connection' | 'followup' | 'pitch'>('connection')
     const [researchingPersonIds, setResearchingPersonIds] = useState<Set<string>>(new Set())
 
+    // Cadences State
+    const [cadences, setCadences] = useState<Cadence[]>([])
+    const [assigningCadence, setAssigningCadence] = useState(false)
+
     // Stats
     const stats = {
         total: leads.length,
@@ -151,6 +156,15 @@ export default function LeadsPage() {
         getHunterCredits().then(result => {
             if (result.available && result.remaining !== undefined) {
                 setHunterCredits(result.remaining)
+            }
+        })
+    }, [])
+
+    // Fetch cadences on mount
+    useEffect(() => {
+        getCadences().then(result => {
+            if (result.success && result.cadences) {
+                setCadences(result.cadences)
             }
         })
     }, [])
@@ -1034,6 +1048,18 @@ export default function LeadsPage() {
                         <p className="text-xs text-muted-foreground">Reuniones agendadas</p>
                     </CardContent>
                 </Card>
+                <Link href="/cadences">
+                    <Card className="cursor-pointer hover:bg-accent transition-colors">
+                        <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+                            <CardTitle className="text-sm font-medium">Cadencias</CardTitle>
+                            <ListTodo className="h-4 w-4 text-purple-500" />
+                        </CardHeader>
+                        <CardContent>
+                            <div className="text-2xl font-bold">{cadences.length}</div>
+                            <p className="text-xs text-muted-foreground">Secuencias activas →</p>
+                        </CardContent>
+                    </Card>
+                </Link>
             </div>
 
             {/* Filters */}

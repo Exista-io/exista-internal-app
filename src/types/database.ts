@@ -164,8 +164,39 @@ export interface Lead {
   person_talking_points?: string[];
   person_research_done: boolean;
   person_research_at?: string;
+  // Cadence fields
+  cadence_id?: string;
+  cadence_started_at?: string;
+  cadence_paused: boolean;
+  cadence_completed_at?: string;
   created_at: string;
   updated_at: string;
+}
+
+// Phase 10: Cadences
+export type CadenceActionType = 'email' | 'linkedin_connect' | 'linkedin_message' | 'wait' | 'call';
+export type LinkedInMessageType = 'connection' | 'followup' | 'pitch';
+
+export interface Cadence {
+  id: string;
+  name: string;
+  description?: string;
+  is_active: boolean;
+  total_steps: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface CadenceStep {
+  id: string;
+  cadence_id: string;
+  step_number: number;
+  action_type: CadenceActionType;
+  wait_days: number;
+  email_template_id?: string;
+  linkedin_message_type?: LinkedInMessageType;
+  notes?: string;
+  created_at: string;
 }
 
 export type MeetingStatus =
