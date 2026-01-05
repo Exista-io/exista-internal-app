@@ -5,6 +5,7 @@ import { quickScanDomain, bulkQuickScan, QuickScanResult } from '@/lib/leads/qui
 import { hunterDomainSearch, getHunterAccountInfo } from '@/lib/leads/hunter'
 import { revalidatePath } from 'next/cache'
 import OpenAI from 'openai'
+import { scanWebsite } from '@/app/actions'
 
 // Initialize Perplexity Client (uses OpenAI-compatible API)
 const perplexityClient = process.env.PERPLEXITY_API_KEY
@@ -839,6 +840,16 @@ export async function improveEmailWithAI(
         company_stage?: string;
         pain_points?: string[];
         recent_news?: string;
+        // Deep Scan data
+        evs_score_estimate?: number;
+        deep_scan_results?: {
+            readiness_score: number;
+            structure_score: number;
+            authority_score: number;
+            readiness_evidence: string;
+            structure_evidence: string;
+            authority_evidence: string;
+        };
     }
 ): Promise<{
     success: boolean;
@@ -861,7 +872,15 @@ export async function improveEmailWithAI(
         if (leadContext.company_stage) contextParts.push(`- Stage: ${leadContext.company_stage}`)
         if (leadContext.recent_news) contextParts.push(`- Noticia reciente: ${leadContext.recent_news}`)
         if (leadContext.pain_points?.length) contextParts.push(`- Dolores potenciales: ${leadContext.pain_points.join(', ')}`)
-        if (leadContext.quick_issues?.length) contextParts.push(`- Issues técnicos: ${leadContext.quick_issues.join(', ')}`)
+        if (leadContext.quick_issues?.length) contextParts.push(`- Issues técnicos Quick Scan: ${leadContext.quick_issues.join(', ')}`)
+        // Deep Scan EVS data
+        if (leadContext.evs_score_estimate) contextParts.push(`- EVS Score estimado: ${leadContext.evs_score_estimate}/100`)
+        if (leadContext.deep_scan_results) {
+            const ds = leadContext.deep_scan_results
+            contextParts.push(`- Readiness (citabilidad): ${ds.readiness_score}/10 - ${ds.readiness_evidence}`)
+            contextParts.push(`- Structure (jerarquía): ${ds.structure_score}/10 - ${ds.structure_evidence}`)
+            contextParts.push(`- Authority (E-E-A-T): ${ds.authority_score}/10 - ${ds.authority_evidence}`)
+        }
 
         const prompt = `Sos un experto en cold email marketing B2B. Tu tarea es mejorar el siguiente email para MAXIMIZAR:
 1. Open rate (asunto cautivador, curiosidad)
@@ -1072,5 +1091,97 @@ export async function bulkResearchLeads(leadIds: string[]): Promise<{
     return {
         success: results.every(r => r.success),
         results,
+    }
+}
+
+/**
+ * Deep Scan a lead using the same Onsite Audit as clients
+ * Returns EVS scores and detailed analysis
+ */
+export async function deepScanLead(leadId: string): Promise<{
+    success: boolean;
+    data?: {
+        evs_score_estimate: number;
+        readiness_score: number;
+        structure_score: number;
+        authority_score: number;
+        readiness_evidence: string;
+        structure_evidence: string;
+        authority_evidence: string;
+    };
+    error?: string;
+}> {
+    const supabase = await createClient()
+
+    // Get lead
+    const { data: lead, error: leadError } = await supabase
+        .from('leads')
+        .select('id, domain')
+        .eq('id', leadId)
+        .single()
+
+    if (leadError || !lead) {
+        return { success: false, error: 'Lead not found' }
+    }
+
+    try {
+        // Run same scan as used for clients
+        const scanResult = await scanWebsite(lead.domain)
+
+        // Calculate EVS estimate (average of 3 pillars, scaled to 100)
+        const evsEstimate = Math.round(
+            ((scanResult.readiness_score + scanResult.structure_score + scanResult.authority_score) / 30) * 100
+        )
+
+        // Update lead with deep scan results
+        const { error: updateError } = await supabase
+            .from('leads')
+            .update({
+                deep_scan_done: true,
+                deep_scan_at: new Date().toISOString(),
+                evs_score_estimate: evsEstimate,
+                deep_scan_results: {
+                    readiness_score: scanResult.readiness_score,
+                    structure_score: scanResult.structure_score,
+                    authority_score: scanResult.authority_score,
+                    readiness_evidence: scanResult.readiness_evidence,
+                    structure_evidence: scanResult.structure_evidence,
+                    authority_evidence: scanResult.authority_evidence,
+                    robots_ok: scanResult.robots_ok,
+                    sitemap_ok: scanResult.sitemap_ok,
+                    canonical_ok: scanResult.canonical_ok,
+                    schema_ok: scanResult.schema_ok,
+                    llms_txt_present: scanResult.llms_txt_present,
+                    notas: scanResult.notas,
+                    scanned_at: new Date().toISOString(),
+                },
+            })
+            .eq('id', leadId)
+
+        if (updateError) {
+            console.error('Failed to update lead:', updateError)
+            return { success: false, error: 'Failed to save deep scan data' }
+        }
+
+        revalidatePath('/leads')
+
+        return {
+            success: true,
+            data: {
+                evs_score_estimate: evsEstimate,
+                readiness_score: scanResult.readiness_score,
+                structure_score: scanResult.structure_score,
+                authority_score: scanResult.authority_score,
+                readiness_evidence: scanResult.readiness_evidence,
+                structure_evidence: scanResult.structure_evidence,
+                authority_evidence: scanResult.authority_evidence,
+            }
+        }
+    } catch (error) {
+        console.error('Deep scan error:', error)
+        return {
+            success: false,
+            error: error instanceof Error ? error.message : 'Deep scan failed'
+        }
     }
 }

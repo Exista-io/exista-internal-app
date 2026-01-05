@@ -5,7 +5,7 @@ import Link from 'next/link'
 import { Plus, Search, Filter, ArrowLeft, Globe, Users, Mail, Linkedin, Zap, Trash2, UserPlus, Loader2, Upload, Sparkles, Pencil, CheckSquare, Download, Send, History, Wand2 } from 'lucide-react'
 import { supabase } from '@/lib/supabase'
 import { Lead } from '@/types/database'
-import { scanLead, deleteLead, convertLeadToClient, enrichLeadWithHunter, bulkImportLeads, getHunterCredits, updateLead, bulkDeleteLeads, bulkUpdateStatus, getEmailTemplates, sendEmailToLead, getEmailPreview, sendCustomEmailToLead, getLeadActivityLogs, improveEmailWithAI, researchLead, bulkResearchLeads } from './actions'
+import { scanLead, deleteLead, convertLeadToClient, enrichLeadWithHunter, bulkImportLeads, getHunterCredits, updateLead, bulkDeleteLeads, bulkUpdateStatus, getEmailTemplates, sendEmailToLead, getEmailPreview, sendCustomEmailToLead, getLeadActivityLogs, improveEmailWithAI, researchLead, bulkResearchLeads, deepScanLead } from './actions'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
@@ -54,6 +54,7 @@ export default function LeadsPage() {
     const [scanningIds, setScanningIds] = useState<Set<string>>(new Set())
     const [enrichingIds, setEnrichingIds] = useState<Set<string>>(new Set())
     const [researchingIds, setResearchingIds] = useState<Set<string>>(new Set())
+    const [deepScanningIds, setDeepScanningIds] = useState<Set<string>>(new Set())
 
     // Bulk Import State
     const [isBulkImportOpen, setIsBulkImportOpen] = useState(false)
@@ -696,6 +697,16 @@ export default function LeadsPage() {
                                                 company_stage: emailingLead.company_stage || undefined,
                                                 pain_points: emailingLead.pain_points || undefined,
                                                 recent_news: emailingLead.recent_news || undefined,
+                                                // Deep Scan data
+                                                evs_score_estimate: emailingLead.evs_score_estimate || undefined,
+                                                deep_scan_results: emailingLead.deep_scan_results as {
+                                                    readiness_score: number;
+                                                    structure_score: number;
+                                                    authority_score: number;
+                                                    readiness_evidence: string;
+                                                    structure_evidence: string;
+                                                    authority_evidence: string;
+                                                } | undefined,
                                             }
                                         )
                                         if (result.success && result.improved_subject && result.improved_body) {
@@ -1335,6 +1346,60 @@ export default function LeadsPage() {
                                                                     </Button>
                                                                 </TooltipTrigger>
                                                                 <TooltipContent>Quick Scan del sitio</TooltipContent>
+                                                            </Tooltip>
+                                                        )}
+                                                        {/* Deep Scan Button - shows after quick scan */}
+                                                        {lead.quick_scan_done && !lead.deep_scan_done && (
+                                                            <Tooltip>
+                                                                <TooltipTrigger asChild>
+                                                                    <Button
+                                                                        variant="ghost"
+                                                                        size="sm"
+                                                                        className="text-blue-600 hover:text-blue-700"
+                                                                        disabled={deepScanningIds.has(lead.id)}
+                                                                        onClick={async () => {
+                                                                            setDeepScanningIds(prev => new Set(prev).add(lead.id))
+                                                                            const result = await deepScanLead(lead.id)
+                                                                            if (result.success) {
+                                                                                fetchLeads()
+                                                                            } else {
+                                                                                alert('Error: ' + result.error)
+                                                                            }
+                                                                            setDeepScanningIds(prev => {
+                                                                                const next = new Set(prev)
+                                                                                next.delete(lead.id)
+                                                                                return next
+                                                                            })
+                                                                        }}
+                                                                    >
+                                                                        {deepScanningIds.has(lead.id) ? (
+                                                                            <Loader2 className="h-3 w-3 animate-spin" />
+                                                                        ) : (
+                                                                            <>🔬 Deep</>
+                                                                        )}
+                                                                    </Button>
+                                                                </TooltipTrigger>
+                                                                <TooltipContent>Deep Scan (Audit completo)</TooltipContent>
+                                                            </Tooltip>
+                                                        )}
+                                                        {lead.deep_scan_done && (
+                                                            <Tooltip>
+                                                                <TooltipTrigger asChild>
+                                                                    <span className="text-xs text-green-600 px-2">EVS: {lead.evs_score_estimate || '?'}</span>
+                                                                </TooltipTrigger>
+                                                                <TooltipContent className="max-w-sm">
+                                                                    <div className="space-y-1 text-xs">
+                                                                        <div className="font-bold text-green-500">✓ Deep Scan Completo</div>
+                                                                        <div>EVS Estimado: {lead.evs_score_estimate}/100</div>
+                                                                        {lead.deep_scan_results && (
+                                                                            <>
+                                                                                <div>📚 Readiness: {(lead.deep_scan_results as Record<string, number>).readiness_score}/10</div>
+                                                                                <div>📐 Structure: {(lead.deep_scan_results as Record<string, number>).structure_score}/10</div>
+                                                                                <div>🏛️ Authority: {(lead.deep_scan_results as Record<string, number>).authority_score}/10</div>
+                                                                            </>
+                                                                        )}
+                                                                    </div>
+                                                                </TooltipContent>
                                                             </Tooltip>
                                                         )}
                                                         {lead.quick_scan_done && lead.outreach_status !== 'converted' && (
