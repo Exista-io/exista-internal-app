@@ -895,21 +895,16 @@ Asunto: ${subject}
 
 ${body}
 
-**Instrucciones:**
+**REGLAS ESTRICTAS (MUY IMPORTANTE):**
+- NUNCA inventes datos, estadísticas o porcentajes que no estén en el contexto
+- NUNCA inventes competidores, rankings o posiciones que no estén en el contexto
+- Si no tenés un dato específico, OMITÍ esa frase completamente
+- Solo usá la información provista arriba, no asumas nada más
+- Los scores y evidencias del contexto son REALES, usalos textualmente
+
+**Instrucciones de estilo:**
 1. Mantené el tono profesional pero cercano
-2. Usá datos específicos del contexto (especialmente industria, dolores, noticias)
-3. El asunto debe generar curiosidad sin ser clickbait
-4. Incluí un solo CTA claro
-5. Máximo 150 palabras en el body
-
-**Email actual:**
-Asunto: ${subject}
-
-${body}
-
-**Instrucciones:**
-1. Mantené el tono profesional pero cercano
-2. Usá datos específicos del contexto
+2. Usá datos específicos del contexto (especialmente scores, evidencias)
 3. El asunto debe generar curiosidad sin ser clickbait
 4. Incluí un solo CTA claro
 5. Máximo 150 palabras en el body
