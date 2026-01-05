@@ -833,6 +833,12 @@ export async function improveEmailWithAI(
         contact_name?: string;
         domain: string;
         quick_issues?: string[];
+        // AI Research context
+        company_description?: string;
+        company_industry?: string;
+        company_stage?: string;
+        pain_points?: string[];
+        recent_news?: string;
     }
 ): Promise<{
     success: boolean;
@@ -846,16 +852,36 @@ export async function improveEmailWithAI(
 
         const model = google('gemini-3-flash-preview')
 
+        // Build context string with all available data
+        const contextParts = []
+        contextParts.push(`- Empresa: ${leadContext.company_name || leadContext.domain}`)
+        contextParts.push(`- Contacto: ${leadContext.contact_name || 'Decisor'}`)
+        if (leadContext.company_description) contextParts.push(`- Qué hacen: ${leadContext.company_description}`)
+        if (leadContext.company_industry) contextParts.push(`- Industria: ${leadContext.company_industry}`)
+        if (leadContext.company_stage) contextParts.push(`- Stage: ${leadContext.company_stage}`)
+        if (leadContext.recent_news) contextParts.push(`- Noticia reciente: ${leadContext.recent_news}`)
+        if (leadContext.pain_points?.length) contextParts.push(`- Dolores potenciales: ${leadContext.pain_points.join(', ')}`)
+        if (leadContext.quick_issues?.length) contextParts.push(`- Issues técnicos: ${leadContext.quick_issues.join(', ')}`)
+
         const prompt = `Sos un experto en cold email marketing B2B. Tu tarea es mejorar el siguiente email para MAXIMIZAR:
 1. Open rate (asunto cautivador, curiosidad)
 2. Click-through rate (CTA claro, urgencia sutil)
 3. Reply rate (pregunta específica, personalización)
 
-**Contexto del lead:**
-- Empresa: ${leadContext.company_name || leadContext.domain}
-- Contacto: ${leadContext.contact_name || 'Decisor'}
-- Dominio: ${leadContext.domain}
-- Problemas detectados: ${leadContext.quick_issues?.join(', ') || 'Optimización técnica'}
+**Contexto del lead (usá estos datos para personalizar):**
+${contextParts.join('\n')}
+
+**Email actual:**
+Asunto: ${subject}
+
+${body}
+
+**Instrucciones:**
+1. Mantené el tono profesional pero cercano
+2. Usá datos específicos del contexto (especialmente industria, dolores, noticias)
+3. El asunto debe generar curiosidad sin ser clickbait
+4. Incluí un solo CTA claro
+5. Máximo 150 palabras en el body
 
 **Email actual:**
 Asunto: ${subject}
@@ -1020,5 +1046,31 @@ Be concise. Focus on information useful for B2B sales outreach. Respond ONLY wit
             success: false,
             error: error instanceof Error ? error.message : 'Research failed'
         }
+    }
+}
+
+/**
+ * Research multiple leads in parallel using Perplexity AI
+ */
+export async function bulkResearchLeads(leadIds: string[]): Promise<{
+    success: boolean;
+    results: Array<{ leadId: string; success: boolean; error?: string }>;
+}> {
+    const results = await Promise.all(
+        leadIds.map(async (leadId) => {
+            const result = await researchLead(leadId)
+            return {
+                leadId,
+                success: result.success,
+                error: result.error,
+            }
+        })
+    )
+
+    revalidatePath('/leads')
+
+    return {
+        success: results.every(r => r.success),
+        results,
     }
 }

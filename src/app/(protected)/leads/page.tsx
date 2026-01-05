@@ -5,7 +5,7 @@ import Link from 'next/link'
 import { Plus, Search, Filter, ArrowLeft, Globe, Users, Mail, Linkedin, Zap, Trash2, UserPlus, Loader2, Upload, Sparkles, Pencil, CheckSquare, Download, Send, History, Wand2 } from 'lucide-react'
 import { supabase } from '@/lib/supabase'
 import { Lead } from '@/types/database'
-import { scanLead, deleteLead, convertLeadToClient, enrichLeadWithHunter, bulkImportLeads, getHunterCredits, updateLead, bulkDeleteLeads, bulkUpdateStatus, getEmailTemplates, sendEmailToLead, getEmailPreview, sendCustomEmailToLead, getLeadActivityLogs, improveEmailWithAI, researchLead } from './actions'
+import { scanLead, deleteLead, convertLeadToClient, enrichLeadWithHunter, bulkImportLeads, getHunterCredits, updateLead, bulkDeleteLeads, bulkUpdateStatus, getEmailTemplates, sendEmailToLead, getEmailPreview, sendCustomEmailToLead, getLeadActivityLogs, improveEmailWithAI, researchLead, bulkResearchLeads } from './actions'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
@@ -690,6 +690,12 @@ export default function LeadsPage() {
                                                 contact_name: emailingLead.contact_name || undefined,
                                                 domain: emailingLead.domain,
                                                 quick_issues: emailingLead.quick_issues || undefined,
+                                                // AI Research context
+                                                company_description: emailingLead.company_description || undefined,
+                                                company_industry: emailingLead.company_industry || undefined,
+                                                company_stage: emailingLead.company_stage || undefined,
+                                                pain_points: emailingLead.pain_points || undefined,
+                                                recent_news: emailingLead.recent_news || undefined,
                                             }
                                         )
                                         if (result.success && result.improved_subject && result.improved_body) {
@@ -968,6 +974,23 @@ export default function LeadsPage() {
                                     ))}
                                 </SelectContent>
                             </Select>
+                            <Button
+                                variant="outline"
+                                size="sm"
+                                disabled={bulkActioning}
+                                onClick={async () => {
+                                    setBulkActioning(true)
+                                    const result = await bulkResearchLeads([...selectedIds])
+                                    const successCount = result.results.filter(r => r.success).length
+                                    alert(`✅ Investigados: ${successCount}/${selectedIds.size}`)
+                                    setSelectedIds(new Set())
+                                    fetchLeads()
+                                    setBulkActioning(false)
+                                }}
+                            >
+                                {bulkActioning ? <Loader2 className="h-4 w-4 animate-spin" /> : <Search className="h-4 w-4 mr-1" />}
+                                Investigar
+                            </Button>
                             <Button
                                 variant="destructive"
                                 size="sm"
