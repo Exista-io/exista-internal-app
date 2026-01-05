@@ -6,7 +6,7 @@ import { Plus, Search, Filter, ArrowLeft, Globe, Users, Mail, Linkedin, Zap, Tra
 import { supabase } from '@/lib/supabase'
 import { Lead, Cadence } from '@/types/database'
 import { scanLead, deleteLead, convertLeadToClient, enrichLeadWithHunter, bulkImportLeads, getHunterCredits, updateLead, bulkDeleteLeads, bulkUpdateStatus, getEmailTemplates, sendEmailToLead, getEmailPreview, sendCustomEmailToLead, getLeadActivityLogs, improveEmailWithAI, researchLead, bulkResearchLeads, deepScanLead, generateLinkedInMessage, exportLeadsToCSV, researchPerson } from './actions'
-import { getCadences, bulkAssignToCadence, advanceLeadInCadence } from '../cadences/actions'
+import { getCadences, bulkAssignToCadence, advanceLeadInCadence, pauseLeadCadence, resumeLeadCadence, removeLeadFromCadence } from '../cadences/actions'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
@@ -1258,6 +1258,7 @@ export default function LeadsPage() {
                                     <TableHead>Issues</TableHead>
                                     <TableHead>Canal</TableHead>
                                     <TableHead>Email Stats</TableHead>
+                                    <TableHead>Cadencia</TableHead>
                                     <TableHead className="text-right">Acciones</TableHead>
                                 </TableRow>
                             </TableHeader>
@@ -1379,6 +1380,86 @@ export default function LeadsPage() {
                                                     </Tooltip>
                                                 ) : (
                                                     <span className="text-muted-foreground text-xs">-</span>
+                                                )}
+                                            </TableCell>
+                                            {/* Cadencia Column */}
+                                            <TableCell>
+                                                {lead.cadence_id ? (
+                                                    <div className="flex flex-col gap-1">
+                                                        {/* Progress indicator */}
+                                                        <div className="flex items-center gap-1 text-xs">
+                                                            {lead.cadence_paused ? (
+                                                                <Badge variant="outline" className="text-yellow-600 border-yellow-300 bg-yellow-50">
+                                                                    ⏸️ Pausada Step {lead.sequence_step}
+                                                                </Badge>
+                                                            ) : lead.cadence_completed_at ? (
+                                                                <Badge variant="outline" className="text-green-600 border-green-300 bg-green-50">
+                                                                    ✅ Completada
+                                                                </Badge>
+                                                            ) : (
+                                                                <Tooltip>
+                                                                    <TooltipTrigger asChild>
+                                                                        <Badge variant="outline" className="text-purple-600 border-purple-300 bg-purple-50 cursor-default">
+                                                                            📋 Step {lead.sequence_step} → {lead.next_action_type === 'email' ? '📧' : lead.next_action_type === 'linkedin_connect' ? '🔗' : lead.next_action_type === 'linkedin_message' ? '💬' : '⏳'}
+                                                                        </Badge>
+                                                                    </TooltipTrigger>
+                                                                    <TooltipContent>
+                                                                        <div className="text-xs">
+                                                                            <p>Próxima acción: {lead.next_action_type}</p>
+                                                                            {lead.next_action_at && (
+                                                                                <p>Fecha: {new Date(lead.next_action_at).toLocaleDateString()}</p>
+                                                                            )}
+                                                                        </div>
+                                                                    </TooltipContent>
+                                                                </Tooltip>
+                                                            )}
+                                                        </div>
+                                                        {/* Pause/Resume/Remove buttons */}
+                                                        {!lead.cadence_completed_at && (
+                                                            <div className="flex items-center gap-1">
+                                                                {lead.cadence_paused ? (
+                                                                    <Button
+                                                                        variant="ghost"
+                                                                        size="sm"
+                                                                        className="h-6 px-2 text-xs text-green-600"
+                                                                        onClick={async () => {
+                                                                            await resumeLeadCadence(lead.id)
+                                                                            fetchLeads()
+                                                                        }}
+                                                                    >
+                                                                        ▶️ Reanudar
+                                                                    </Button>
+                                                                ) : (
+                                                                    <Button
+                                                                        variant="ghost"
+                                                                        size="sm"
+                                                                        className="h-6 px-2 text-xs text-yellow-600"
+                                                                        onClick={async () => {
+                                                                            await pauseLeadCadence(lead.id)
+                                                                            fetchLeads()
+                                                                        }}
+                                                                    >
+                                                                        ⏸️ Pausar
+                                                                    </Button>
+                                                                )}
+                                                                <Button
+                                                                    variant="ghost"
+                                                                    size="sm"
+                                                                    className="h-6 px-2 text-xs text-red-500"
+                                                                    onClick={async () => {
+                                                                        if (confirm('¿Quitar este lead de la cadencia?')) {
+                                                                            await removeLeadFromCadence(lead.id)
+                                                                            fetchLeads()
+                                                                        }
+                                                                    }}
+                                                                >
+                                                                    ✕
+                                                                </Button>
+                                                            </div>
+                                                        )}
+                                                    </div>
+                                                ) : (
+                                                    <span className="text-muted-foreground text-xs">—</span>
                                                 )}
                                             </TableCell>
                                             <TableCell className="text-right">
