@@ -5,7 +5,7 @@ import Link from 'next/link'
 import { Plus, Search, Filter, ArrowLeft, Globe, Users, Mail, Linkedin, Zap, Trash2, UserPlus, Loader2, Upload, Sparkles, Pencil, CheckSquare, Download, Send, History, Wand2 } from 'lucide-react'
 import { supabase } from '@/lib/supabase'
 import { Lead } from '@/types/database'
-import { scanLead, deleteLead, convertLeadToClient, enrichLeadWithHunter, bulkImportLeads, getHunterCredits, updateLead, bulkDeleteLeads, bulkUpdateStatus, getEmailTemplates, sendEmailToLead, getEmailPreview, sendCustomEmailToLead, getLeadActivityLogs, improveEmailWithAI, researchLead, bulkResearchLeads, deepScanLead, generateLinkedInMessage, exportLeadsToCSV } from './actions'
+import { scanLead, deleteLead, convertLeadToClient, enrichLeadWithHunter, bulkImportLeads, getHunterCredits, updateLead, bulkDeleteLeads, bulkUpdateStatus, getEmailTemplates, sendEmailToLead, getEmailPreview, sendCustomEmailToLead, getLeadActivityLogs, improveEmailWithAI, researchLead, bulkResearchLeads, deepScanLead, generateLinkedInMessage, exportLeadsToCSV, researchPerson } from './actions'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
@@ -116,6 +116,7 @@ export default function LeadsPage() {
     const [linkedInMessage, setLinkedInMessage] = useState('')
     const [generatingLinkedIn, setGeneratingLinkedIn] = useState(false)
     const [linkedInMessageType, setLinkedInMessageType] = useState<'connection' | 'followup' | 'pitch'>('connection')
+    const [researchingPersonIds, setResearchingPersonIds] = useState<Set<string>>(new Set())
 
     // Stats
     const stats = {
@@ -1477,6 +1478,60 @@ export default function LeadsPage() {
                                                                 ) : 'Investigar (Perplexity)'}
                                                             </TooltipContent>
                                                         </Tooltip>
+                                                        {/* Investigar Persona Button */}
+                                                        {lead.ai_research_done && lead.contact_name && !lead.person_research_done && (
+                                                            <Tooltip>
+                                                                <TooltipTrigger asChild>
+                                                                    <Button
+                                                                        variant="ghost"
+                                                                        size="sm"
+                                                                        className="text-blue-600 hover:text-blue-700"
+                                                                        disabled={researchingPersonIds.has(lead.id)}
+                                                                        onClick={async () => {
+                                                                            setResearchingPersonIds(prev => new Set(prev).add(lead.id))
+                                                                            const result = await researchPerson(lead.id)
+                                                                            if (result.success) {
+                                                                                fetchLeads()
+                                                                            } else {
+                                                                                alert('Error: ' + (result.error || 'No se pudo investigar'))
+                                                                            }
+                                                                            setResearchingPersonIds(prev => {
+                                                                                const next = new Set(prev)
+                                                                                next.delete(lead.id)
+                                                                                return next
+                                                                            })
+                                                                        }}
+                                                                    >
+                                                                        {researchingPersonIds.has(lead.id) ? (
+                                                                            <Loader2 className="h-3 w-3 animate-spin" />
+                                                                        ) : (
+                                                                            <span>👤</span>
+                                                                        )}
+                                                                    </Button>
+                                                                </TooltipTrigger>
+                                                                <TooltipContent>Investigar Persona (Perplexity)</TooltipContent>
+                                                            </Tooltip>
+                                                        )}
+                                                        {lead.person_research_done && (
+                                                            <Tooltip>
+                                                                <TooltipTrigger asChild>
+                                                                    <span className="text-xs text-blue-600 font-medium px-1">👤✓</span>
+                                                                </TooltipTrigger>
+                                                                <TooltipContent className="max-w-sm">
+                                                                    <div className="space-y-1 text-xs">
+                                                                        <div className="font-bold text-blue-500">👤 {lead.contact_name}</div>
+                                                                        {lead.person_background && <div>{lead.person_background}</div>}
+                                                                        {lead.person_recent_activity && <div><span className="text-muted-foreground">📰</span> {lead.person_recent_activity}</div>}
+                                                                        {lead.person_interests && lead.person_interests.length > 0 && (
+                                                                            <div><span className="text-muted-foreground">💡</span> {lead.person_interests.join(', ')}</div>
+                                                                        )}
+                                                                        {lead.person_talking_points && lead.person_talking_points.length > 0 && (
+                                                                            <div><span className="text-muted-foreground">💬</span> {lead.person_talking_points.join(', ')}</div>
+                                                                        )}
+                                                                    </div>
+                                                                </TooltipContent>
+                                                            </Tooltip>
+                                                        )}
                                                         {!lead.quick_scan_done && (
                                                             <Tooltip>
                                                                 <TooltipTrigger asChild>
