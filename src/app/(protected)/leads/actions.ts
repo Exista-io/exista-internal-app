@@ -869,7 +869,7 @@ export async function improveEmailWithAI(
         const { generateText } = await import('ai')
         const { google } = await import('@ai-sdk/google')
 
-        const model = google('gemini-2.0-flash')
+        const model = google('gemini-3.0-flash-preview')
 
         // Auto-research person if not done and contact_name exists
         let personContext = { ...leadContext }
@@ -1372,7 +1372,7 @@ export async function generateLinkedInMessage(
         const { generateText } = await import('ai')
         const { google } = await import('@ai-sdk/google')
 
-        const model = google('gemini-2.0-flash')
+        const model = google('gemini-3.0-flash-preview')
 
         // Research person if requested
         let personContext = ''
