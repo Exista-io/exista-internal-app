@@ -694,6 +694,7 @@ export default function LeadsPage() {
                                         const result = await improveEmailWithAI(
                                             emailPreview.subject,
                                             emailPreview.body,
+                                            emailingLead.id,
                                             {
                                                 company_name: emailingLead.company_name || undefined,
                                                 contact_name: emailingLead.contact_name || undefined,
@@ -720,6 +721,7 @@ export default function LeadsPage() {
                                                 person_recent_activity: emailingLead.person_recent_activity || undefined,
                                                 person_interests: emailingLead.person_interests || undefined,
                                                 person_talking_points: emailingLead.person_talking_points || undefined,
+                                                person_research_done: emailingLead.person_research_done || false,
                                             }
                                         )
                                         if (result.success && result.improved_subject && result.improved_body) {

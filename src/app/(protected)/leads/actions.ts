@@ -825,10 +825,12 @@ export async function getLeadActivityLogs(leadId: string): Promise<{
 
 /**
  * Improve email with AI (Gemini) for maximum engagement
+ * Now automatically researches the person if not done yet
  */
 export async function improveEmailWithAI(
     subject: string,
     body: string,
+    leadId: string,
     leadContext: {
         company_name?: string;
         contact_name?: string;
@@ -855,6 +857,7 @@ export async function improveEmailWithAI(
         person_recent_activity?: string;
         person_interests?: string[];
         person_talking_points?: string[];
+        person_research_done?: boolean;
     }
 ): Promise<{
     success: boolean;
@@ -868,6 +871,21 @@ export async function improveEmailWithAI(
 
         const model = google('gemini-2.0-flash')
 
+        // Auto-research person if not done and contact_name exists
+        let personContext = { ...leadContext }
+        if (!leadContext.person_research_done && leadContext.contact_name) {
+            const personResearch = await researchPerson(leadId)
+            if (personResearch.success && personResearch.personInfo) {
+                personContext = {
+                    ...leadContext,
+                    person_background: personResearch.personInfo.background,
+                    person_recent_activity: personResearch.personInfo.recent_activity,
+                    person_interests: personResearch.personInfo.interests,
+                    person_talking_points: personResearch.personInfo.talking_points,
+                }
+            }
+        }
+
         // Build context string with all available data
         const contextParts = []
 
@@ -880,13 +898,13 @@ export async function improveEmailWithAI(
         if (leadContext.recent_news) contextParts.push(`- Noticia reciente: ${leadContext.recent_news}`)
         if (leadContext.pain_points?.length) contextParts.push(`- Desafíos detectados: ${leadContext.pain_points.join(', ')}`)
 
-        // Contact info
+        // Contact info (use personContext for person-specific fields)
         contextParts.push(`\n## CONTACTO`)
-        contextParts.push(`- Nombre: ${leadContext.contact_name || 'Decisor'}`)
-        if (leadContext.person_background) contextParts.push(`- Background profesional: ${leadContext.person_background}`)
-        if (leadContext.person_recent_activity) contextParts.push(`- Actividad reciente: ${leadContext.person_recent_activity}`)
-        if (leadContext.person_interests?.length) contextParts.push(`- Intereses: ${leadContext.person_interests.join(', ')}`)
-        if (leadContext.person_talking_points?.length) contextParts.push(`- Temas de conversación: ${leadContext.person_talking_points.join(', ')}`)
+        contextParts.push(`- Nombre: ${personContext.contact_name || 'Decisor'}`)
+        if (personContext.person_background) contextParts.push(`- Background profesional: ${personContext.person_background}`)
+        if (personContext.person_recent_activity) contextParts.push(`- Actividad reciente: ${personContext.person_recent_activity}`)
+        if (personContext.person_interests?.length) contextParts.push(`- Intereses: ${personContext.person_interests.join(', ')}`)
+        if (personContext.person_talking_points?.length) contextParts.push(`- Temas de conversación: ${personContext.person_talking_points.join(', ')}`)
 
         // Technical analysis (translated to plain language - NO JARGON)
         if (leadContext.evs_score_estimate || leadContext.deep_scan_results) {
