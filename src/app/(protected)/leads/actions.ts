@@ -1182,12 +1182,99 @@ export async function deepScanLead(leadId: string): Promise<{
 }
 
 /**
+ * Research a person (contact) using Perplexity AI
+ * Gathers background info for personalized outreach
+ */
+export async function researchPerson(leadId: string): Promise<{
+    success: boolean;
+    personInfo?: {
+        background: string;
+        recent_activity: string;
+        interests: string[];
+        talking_points: string[];
+    };
+    error?: string;
+}> {
+    if (!perplexityClient) {
+        return { success: false, error: 'Perplexity API key not configured' }
+    }
+
+    const supabase = await createClient()
+
+    const { data: lead, error: leadError } = await supabase
+        .from('leads')
+        .select('contact_name, contact_role, company_name, domain, linkedin_url')
+        .eq('id', leadId)
+        .single()
+
+    if (leadError || !lead || !lead.contact_name) {
+        return { success: false, error: 'Lead or contact name not found' }
+    }
+
+    try {
+        const searchQuery = `${lead.contact_name} ${lead.contact_role || ''} ${lead.company_name || lead.domain}`
+
+        const response = await perplexityClient.chat.completions.create({
+            model: 'sonar',
+            messages: [
+                {
+                    role: 'system',
+                    content: `Sos un investigador de personas para prospección B2B. 
+Buscá información sobre la persona para ayudar a personalizar outreach.
+Respondé en JSON con este formato exacto:
+{
+  "background": "breve descripción profesional",
+  "recent_activity": "publicaciones, charlas, o noticias recientes",
+  "interests": ["interés1", "interés2"],
+  "talking_points": ["tema de conversación 1", "tema de conversación 2"]
+}
+Si no encontrás info, dejá strings vacíos o arrays vacíos. NO inventes.`
+                },
+                {
+                    role: 'user',
+                    content: `Investigá a: ${searchQuery}
+LinkedIn: ${lead.linkedin_url || 'no disponible'}
+Empresa: ${lead.company_name || lead.domain}`
+                }
+            ],
+        })
+
+        const content = response.choices[0]?.message?.content || '{}'
+
+        // Parse JSON response
+        const jsonMatch = content.match(/\{[\s\S]*\}/)
+        if (!jsonMatch) {
+            return { success: false, error: 'Could not parse person research' }
+        }
+
+        const personInfo = JSON.parse(jsonMatch[0])
+
+        return {
+            success: true,
+            personInfo: {
+                background: personInfo.background || '',
+                recent_activity: personInfo.recent_activity || '',
+                interests: personInfo.interests || [],
+                talking_points: personInfo.talking_points || [],
+            }
+        }
+    } catch (error) {
+        console.error('Person research error:', error)
+        return {
+            success: false,
+            error: error instanceof Error ? error.message : 'Research failed'
+        }
+    }
+}
+
+/**
  * Generate a personalized LinkedIn message using AI
- * Uses all available research context for personalization
+ * Uses all available research context + person research for deep personalization
  */
 export async function generateLinkedInMessage(
     leadId: string,
-    messageType: 'connection' | 'followup' | 'pitch'
+    messageType: 'connection' | 'followup' | 'pitch',
+    includePersonResearch: boolean = true
 ): Promise<{
     success: boolean;
     message?: string;
@@ -1212,48 +1299,139 @@ export async function generateLinkedInMessage(
 
         const model = google('gemini-2.0-flash')
 
-        // Build context
+        // Research person if requested
+        let personContext = ''
+        if (includePersonResearch && lead.contact_name) {
+            const personResearch = await researchPerson(leadId)
+            if (personResearch.success && personResearch.personInfo) {
+                const pi = personResearch.personInfo
+                if (pi.background) personContext += `- Background profesional: ${pi.background}\n`
+                if (pi.recent_activity) personContext += `- Actividad reciente: ${pi.recent_activity}\n`
+                if (pi.interests?.length) personContext += `- Intereses: ${pi.interests.join(', ')}\n`
+                if (pi.talking_points?.length) personContext += `- Temas de conversación: ${pi.talking_points.join(', ')}\n`
+            }
+        }
+
+        // Build comprehensive context
         const contextParts = []
-        contextParts.push(`- Empresa: ${lead.company_name || lead.domain}`)
-        if (lead.contact_name) contextParts.push(`- Contacto: ${lead.contact_name}`)
-        if (lead.contact_role) contextParts.push(`- Rol: ${lead.contact_role}`)
+
+        // Company info
+        contextParts.push(`## EMPRESA`)
+        contextParts.push(`- Nombre: ${lead.company_name || lead.domain}`)
+        contextParts.push(`- Dominio: ${lead.domain}`)
         if (lead.company_description) contextParts.push(`- Qué hacen: ${lead.company_description}`)
         if (lead.company_industry) contextParts.push(`- Industria: ${lead.company_industry}`)
         if (lead.company_stage) contextParts.push(`- Stage: ${lead.company_stage}`)
+        if (lead.employee_count) contextParts.push(`- Empleados: ${lead.employee_count}`)
         if (lead.recent_news) contextParts.push(`- Noticia reciente: ${lead.recent_news}`)
-        if (lead.pain_points?.length) contextParts.push(`- Pain points: ${lead.pain_points.join(', ')}`)
-        if (lead.evs_score_estimate) contextParts.push(`- EVS Score: ${lead.evs_score_estimate}/100`)
+        if (lead.pain_points?.length) contextParts.push(`- Desafíos detectados: ${lead.pain_points.join(', ')}`)
+        if (lead.competitors?.length) contextParts.push(`- Competidores: ${lead.competitors.join(', ')}`)
+        if (lead.tech_stack?.length) contextParts.push(`- Tech stack: ${lead.tech_stack.join(', ')}`)
 
-        const typeInstructions = {
-            connection: `Generá un mensaje de conexión de LinkedIn (máximo 300 caracteres).
-- Mencioná algo específico sobre su empresa o rol
-- No vendas nada, solo buscá conectar
-- Tono casual pero profesional`,
-            followup: `Generá un mensaje de seguimiento de LinkedIn (máximo 500 caracteres).
-- Asumí que ya están conectados
-- Mencioná valor que podés aportar
-- Pregunta abierta para iniciar conversación`,
-            pitch: `Generá un mensaje de pitch corto de LinkedIn (máximo 500 caracteres).
-- Mencioná un problema específico que detectaste (pain points, EVS bajo)
-- Ofrecé una solución concreta
-- CTA claro (llamada, demo, reporte)`
+        // Contact info
+        contextParts.push(`\n## CONTACTO`)
+        contextParts.push(`- Nombre: ${lead.contact_name || 'Desconocido'}`)
+        if (lead.contact_role) contextParts.push(`- Rol: ${lead.contact_role}`)
+        if (personContext) contextParts.push(personContext)
+
+        // Technical analysis (translated to plain language)
+        if (lead.deep_scan_done && lead.deep_scan_results) {
+            const ds = lead.deep_scan_results as Record<string, unknown>
+            contextParts.push(`\n## ANÁLISIS TÉCNICO DE SU SITIO WEB`)
+
+            // EVS translated to plain language
+            if (lead.evs_score_estimate) {
+                const score = lead.evs_score_estimate
+                let interpretation = ''
+                if (score >= 80) interpretation = 'Excelente - su sitio está muy bien optimizado para aparecer en respuestas de IA'
+                else if (score >= 60) interpretation = 'Moderado - hay oportunidades claras de mejora para que la IA los cite más'
+                else interpretation = 'Bajo - su competencia probablemente aparece más en respuestas de ChatGPT/Perplexity'
+
+                contextParts.push(`- Visibilidad en IA: ${score}/100 (${interpretation})`)
+            }
+
+            // Scores with plain explanations
+            if (ds.readiness_score) {
+                contextParts.push(`- Citabilidad: ${ds.readiness_score}/10 - Qué tan fácil es para la IA extraer y citar su contenido`)
+            }
+            if (ds.structure_score) {
+                contextParts.push(`- Estructura: ${ds.structure_score}/10 - Qué tan bien organizado está el contenido`)
+            }
+            if (ds.authority_score) {
+                contextParts.push(`- Autoridad: ${ds.authority_score}/10 - Señales de credibilidad (autores, fuentes, E-E-A-T)`)
+            }
+
+            // Evidence (specific issues)
+            if (ds.readiness_evidence) contextParts.push(`- Detalle citabilidad: ${ds.readiness_evidence}`)
+            if (ds.structure_evidence) contextParts.push(`- Detalle estructura: ${ds.structure_evidence}`)
+            if (ds.authority_evidence) contextParts.push(`- Detalle autoridad: ${ds.authority_evidence}`)
         }
 
-        const prompt = `Sos un experto en LinkedIn outreach B2B. Generá un mensaje personalizado.
+        // Quick scan issues
+        if (lead.quick_issues?.length) {
+            contextParts.push(`\n## ISSUES TÉCNICOS DETECTADOS`)
+            contextParts.push(lead.quick_issues.map((issue: string) => `- ${issue}`).join('\n'))
+        }
 
-**Contexto del lead:**
+        const typeInstructions = {
+            connection: `Generá un mensaje de CONEXIÓN de LinkedIn (máximo 300 caracteres).
+
+OBJETIVO: Que acepten la conexión. NO vendas nada.
+
+CÓMO HACERLO:
+- Mencioná algo MUY específico sobre la persona (su rol, algo que publicó, un interés)
+- O algo específico sobre la empresa que muestre que investigaste
+- Sé genuino, no vendedor
+- Preguntá algo o proponé conectar por interés mutuo
+
+EJEMPLO BUENO: "María, vi tu charla sobre product-led growth en SaaStr. Estamos obsesionados con el mismo tema. ¿Conectamos?"
+EJEMPLO MALO: "Hola María, me gustaría conectar contigo. Tenemos soluciones interesantes."`,
+
+            followup: `Generá un mensaje de SEGUIMIENTO de LinkedIn (máximo 500 caracteres).
+
+OBJETIVO: Iniciar conversación de valor.
+
+CÓMO HACERLO:
+- Asumí que ya están conectados
+- Mencioná algo de valor que podés aportar (un insight, un dato, una tendencia)
+- Relacionalo con su empresa/rol específico
+- Terminá con pregunta abierta
+
+EJEMPLO BUENO: "Pedro, estuve analizando cómo las fintech como [empresa] aparecen en respuestas de ChatGPT. Encontré que sus competidores los están superando en ciertas búsquedas clave. ¿Te interesa que te comparta el análisis?"`,
+
+            pitch: `Generá un mensaje de PITCH corto de LinkedIn (máximo 500 caracteres).
+
+OBJETIVO: Generar interés en una llamada/demo.
+
+CÓMO HACERLO:
+- Mencioná un problema ESPECÍFICO que detectaste en su sitio (usa el análisis técnico)
+- Explicá el impacto en términos simples (NO uses jerga como "EVS", "E-E-A-T")
+- Ofrecé valor concreto (reporte, diagnóstico, insights)
+- CTA claro pero no agresivo
+
+EJEMPLO BUENO: "Ana, analicé [empresa].com y noté que cuando alguien pregunta a ChatGPT por [categoría], su competencia aparece primero. Tengo un diagnóstico con 3 ajustes específicos para mejorar eso. ¿Te lo mando?"
+NUNCA DIGAS: "Tu EVS es bajo" - nadie sabe qué es EVS`
+        }
+
+        const prompt = `Sos un experto en LinkedIn outreach B2B. Tu tarea es generar UN mensaje altamente personalizado.
+
 ${contextParts.join('\n')}
 
-**Tipo de mensaje:** ${messageType}
+---
+
+**TIPO DE MENSAJE:** ${messageType.toUpperCase()}
 ${typeInstructions[messageType]}
 
-**REGLAS ESTRICTAS:**
-- NUNCA inventes datos que no estén en el contexto
-- Usá solo la información provista
-- El mensaje debe sentirse genuino, no genérico
-- Si es "connection", NO vendas nada
+---
 
-**Respondé SOLO con el mensaje, sin explicación ni formato adicional.**`
+**REGLAS CRÍTICAS:**
+1. NUNCA uses jerga técnica que el destinatario no entienda (NO digas "EVS", "E-E-A-T", "schema markup")
+2. NUNCA inventes datos - solo usá lo que está en el contexto
+3. Sé ESPECÍFICO - mencioná datos concretos del contexto (nombre de empresa, rol, issues específicos)
+4. El mensaje debe sentirse escrito a mano, no generado por IA
+5. Si es "connection", NO menciones nada de ventas ni análisis técnico
+
+**Respondé SOLO con el mensaje listo para enviar, sin explicación ni formato adicional.**`
 
         const result = await generateText({
             model,
