@@ -21,6 +21,7 @@ import { Badge } from '@/components/ui/badge'
 import { Separator } from '@/components/ui/separator'
 import { Button } from '@/components/ui/button'
 import { logout } from '@/app/login/actions'
+import { TodaysActionsWidget } from '@/components/TodaysActionsWidget'
 
 // Helper Types
 type ClientWithLatestAudit = Client & {
@@ -437,6 +438,11 @@ export default function DashboardPage() {
 
           </CardContent>
         </Card>
+
+        {/* Today's Cadence Actions */}
+        <div className="col-span-full">
+          <TodaysActionsWidget maxItems={5} />
+        </div>
       </div>
     </div>
   )

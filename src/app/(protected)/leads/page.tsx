@@ -6,7 +6,7 @@ import { Plus, Search, Filter, ArrowLeft, Globe, Users, Mail, Linkedin, Zap, Tra
 import { supabase } from '@/lib/supabase'
 import { Lead, Cadence } from '@/types/database'
 import { scanLead, deleteLead, convertLeadToClient, enrichLeadWithHunter, bulkImportLeads, getHunterCredits, updateLead, bulkDeleteLeads, bulkUpdateStatus, getEmailTemplates, sendEmailToLead, getEmailPreview, sendCustomEmailToLead, getLeadActivityLogs, improveEmailWithAI, researchLead, bulkResearchLeads, deepScanLead, generateLinkedInMessage, exportLeadsToCSV, researchPerson } from './actions'
-import { getCadences, bulkAssignToCadence } from '../cadences/actions'
+import { getCadences, bulkAssignToCadence, advanceLeadInCadence } from '../cadences/actions'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
@@ -837,6 +837,10 @@ export default function LeadsPage() {
                                         emailAttachments.length > 0 ? emailAttachments : undefined
                                     )
                                     if (result.success) {
+                                        // Auto-advance in cadence if lead is in one
+                                        if (emailingLead.cadence_id && !emailingLead.cadence_paused) {
+                                            await advanceLeadInCadence(emailingLead.id)
+                                        }
                                         alert(`✅ Email enviado correctamente!${emailAttachments.length > 0 ? ` (con ${emailAttachments.length} adjunto/s)` : ''}`)
                                         setIsEmailDialogOpen(false)
                                         setEmailPreview(null)
@@ -1119,6 +1123,30 @@ export default function LeadsPage() {
                                     ))}
                                 </SelectContent>
                             </Select>
+                            {cadences.length > 0 && (
+                                <Select
+                                    onValueChange={async (cadenceId) => {
+                                        setAssigningCadence(true)
+                                        const result = await bulkAssignToCadence([...selectedIds], cadenceId)
+                                        alert(`✅ Asignados a cadencia: ${result.assigned}/${selectedIds.size}`)
+                                        setSelectedIds(new Set())
+                                        fetchLeads()
+                                        setAssigningCadence(false)
+                                    }}
+                                    disabled={assigningCadence}
+                                >
+                                    <SelectTrigger className="w-[160px] h-8 text-sm">
+                                        <SelectValue placeholder="📋 Asignar cadencia" />
+                                    </SelectTrigger>
+                                    <SelectContent>
+                                        {cadences.map((cadence) => (
+                                            <SelectItem key={cadence.id} value={cadence.id}>
+                                                {cadence.name}
+                                            </SelectItem>
+                                        ))}
+                                    </SelectContent>
+                                </Select>
+                            )}
                             <Button
                                 variant="outline"
                                 size="sm"
