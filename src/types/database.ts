@@ -157,6 +157,13 @@ export interface Lead {
   deep_scan_at?: string;
   deep_scan_results?: Record<string, unknown>;
   evs_score_estimate?: number;
+  // Person Research fields (Perplexity)
+  person_background?: string;
+  person_recent_activity?: string;
+  person_interests?: string[];
+  person_talking_points?: string[];
+  person_research_done: boolean;
+  person_research_at?: string;
   created_at: string;
   updated_at: string;
 }

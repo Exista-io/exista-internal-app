@@ -714,6 +714,11 @@ export default function LeadsPage() {
                                                     structure_evidence: string;
                                                     authority_evidence: string;
                                                 } | undefined,
+                                                // Person Research data
+                                                person_background: emailingLead.person_background || undefined,
+                                                person_recent_activity: emailingLead.person_recent_activity || undefined,
+                                                person_interests: emailingLead.person_interests || undefined,
+                                                person_talking_points: emailingLead.person_talking_points || undefined,
                                             }
                                         )
                                         if (result.success && result.improved_subject && result.improved_body) {
@@ -1457,6 +1462,16 @@ export default function LeadsPage() {
                                                                         {lead.employee_count && <div><span className="text-muted-foreground">👥</span> {lead.employee_count} empleados</div>}
                                                                         {lead.pain_points && lead.pain_points.length > 0 && (
                                                                             <div><span className="text-muted-foreground">⚠️</span> {lead.pain_points.slice(0, 2).join(', ')}</div>
+                                                                        )}
+                                                                        {/* Person Research */}
+                                                                        {lead.person_research_done && (
+                                                                            <>
+                                                                                <div className="mt-2 pt-2 border-t font-bold text-blue-500">👤 Info de {lead.contact_name?.split(' ')[0] || 'Contacto'}</div>
+                                                                                {lead.person_background && <div className="text-xs">{lead.person_background}</div>}
+                                                                                {lead.person_interests && lead.person_interests.length > 0 && (
+                                                                                    <div><span className="text-muted-foreground">💡</span> {lead.person_interests.slice(0, 2).join(', ')}</div>
+                                                                                )}
+                                                                            </>
                                                                         )}
                                                                     </div>
                                                                 ) : 'Investigar (Perplexity)'}

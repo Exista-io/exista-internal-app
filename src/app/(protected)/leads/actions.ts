@@ -850,6 +850,11 @@ export async function improveEmailWithAI(
             structure_evidence: string;
             authority_evidence: string;
         };
+        // Person Research data
+        person_background?: string;
+        person_recent_activity?: string;
+        person_interests?: string[];
+        person_talking_points?: string[];
     }
 ): Promise<{
     success: boolean;
@@ -861,25 +866,58 @@ export async function improveEmailWithAI(
         const { generateText } = await import('ai')
         const { google } = await import('@ai-sdk/google')
 
-        const model = google('gemini-3-flash-preview')
+        const model = google('gemini-2.0-flash')
 
         // Build context string with all available data
         const contextParts = []
-        contextParts.push(`- Empresa: ${leadContext.company_name || leadContext.domain}`)
-        contextParts.push(`- Contacto: ${leadContext.contact_name || 'Decisor'}`)
+
+        // Company info
+        contextParts.push(`## EMPRESA`)
+        contextParts.push(`- Nombre: ${leadContext.company_name || leadContext.domain}`)
         if (leadContext.company_description) contextParts.push(`- Qué hacen: ${leadContext.company_description}`)
         if (leadContext.company_industry) contextParts.push(`- Industria: ${leadContext.company_industry}`)
         if (leadContext.company_stage) contextParts.push(`- Stage: ${leadContext.company_stage}`)
         if (leadContext.recent_news) contextParts.push(`- Noticia reciente: ${leadContext.recent_news}`)
-        if (leadContext.pain_points?.length) contextParts.push(`- Dolores potenciales: ${leadContext.pain_points.join(', ')}`)
-        if (leadContext.quick_issues?.length) contextParts.push(`- Issues técnicos Quick Scan: ${leadContext.quick_issues.join(', ')}`)
-        // Deep Scan EVS data
-        if (leadContext.evs_score_estimate) contextParts.push(`- EVS Score estimado: ${leadContext.evs_score_estimate}/100`)
-        if (leadContext.deep_scan_results) {
-            const ds = leadContext.deep_scan_results
-            contextParts.push(`- Readiness (citabilidad): ${ds.readiness_score}/10 - ${ds.readiness_evidence}`)
-            contextParts.push(`- Structure (jerarquía): ${ds.structure_score}/10 - ${ds.structure_evidence}`)
-            contextParts.push(`- Authority (E-E-A-T): ${ds.authority_score}/10 - ${ds.authority_evidence}`)
+        if (leadContext.pain_points?.length) contextParts.push(`- Desafíos detectados: ${leadContext.pain_points.join(', ')}`)
+
+        // Contact info
+        contextParts.push(`\n## CONTACTO`)
+        contextParts.push(`- Nombre: ${leadContext.contact_name || 'Decisor'}`)
+        if (leadContext.person_background) contextParts.push(`- Background profesional: ${leadContext.person_background}`)
+        if (leadContext.person_recent_activity) contextParts.push(`- Actividad reciente: ${leadContext.person_recent_activity}`)
+        if (leadContext.person_interests?.length) contextParts.push(`- Intereses: ${leadContext.person_interests.join(', ')}`)
+        if (leadContext.person_talking_points?.length) contextParts.push(`- Temas de conversación: ${leadContext.person_talking_points.join(', ')}`)
+
+        // Technical analysis (translated to plain language - NO JARGON)
+        if (leadContext.evs_score_estimate || leadContext.deep_scan_results) {
+            contextParts.push(`\n## ANÁLISIS TÉCNICO DE SU SITIO WEB`)
+
+            // EVS translated to plain language
+            if (leadContext.evs_score_estimate) {
+                const score = leadContext.evs_score_estimate
+                let interpretation = ''
+                if (score >= 80) interpretation = 'Excelente - su sitio está bien optimizado para que la IA lo cite'
+                else if (score >= 60) interpretation = 'Hay oportunidades claras de mejora para que ChatGPT/Perplexity los recomiende más'
+                else interpretation = 'Su competencia probablemente aparece más que ellos en respuestas de IA'
+
+                contextParts.push(`- Visibilidad en IA: ${score}/100 (${interpretation})`)
+            }
+
+            if (leadContext.deep_scan_results) {
+                const ds = leadContext.deep_scan_results
+                contextParts.push(`- Citabilidad: ${ds.readiness_score}/10 (qué tan fácil es para la IA citar su contenido)`)
+                contextParts.push(`- Estructura: ${ds.structure_score}/10 (organización del contenido)`)
+                contextParts.push(`- Credibilidad: ${ds.authority_score}/10 (señales de autoridad y confianza)`)
+                if (ds.readiness_evidence) contextParts.push(`  → ${ds.readiness_evidence}`)
+                if (ds.structure_evidence) contextParts.push(`  → ${ds.structure_evidence}`)
+                if (ds.authority_evidence) contextParts.push(`  → ${ds.authority_evidence}`)
+            }
+        }
+
+        // Quick scan issues
+        if (leadContext.quick_issues?.length) {
+            contextParts.push(`\n## ISSUES TÉCNICOS DETECTADOS`)
+            contextParts.push(leadContext.quick_issues.map(issue => `- ${issue}`).join('\n'))
         }
 
         const prompt = `Sos un experto en cold email marketing B2B. Tu tarea es mejorar el siguiente email para MAXIMIZAR:
@@ -1248,6 +1286,25 @@ Empresa: ${lead.company_name || lead.domain}`
         }
 
         const personInfo = JSON.parse(jsonMatch[0])
+
+        // Save to database
+        const { error: updateError } = await supabase
+            .from('leads')
+            .update({
+                person_background: personInfo.background || null,
+                person_recent_activity: personInfo.recent_activity || null,
+                person_interests: personInfo.interests || [],
+                person_talking_points: personInfo.talking_points || [],
+                person_research_done: true,
+                person_research_at: new Date().toISOString(),
+            })
+            .eq('id', leadId)
+
+        if (updateError) {
+            console.error('Failed to save person research:', updateError)
+        }
+
+        revalidatePath('/leads')
 
         return {
             success: true,
