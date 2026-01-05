@@ -5,7 +5,7 @@ import Link from 'next/link'
 import { Plus, Search, Filter, ArrowLeft, Globe, Users, Mail, Linkedin, Zap, Trash2, UserPlus, Loader2, Upload, Sparkles, Pencil, CheckSquare, Download, Send, History, Wand2 } from 'lucide-react'
 import { supabase } from '@/lib/supabase'
 import { Lead } from '@/types/database'
-import { scanLead, deleteLead, convertLeadToClient, enrichLeadWithHunter, bulkImportLeads, getHunterCredits, updateLead, bulkDeleteLeads, bulkUpdateStatus, getEmailTemplates, sendEmailToLead, getEmailPreview, sendCustomEmailToLead, getLeadActivityLogs, improveEmailWithAI } from './actions'
+import { scanLead, deleteLead, convertLeadToClient, enrichLeadWithHunter, bulkImportLeads, getHunterCredits, updateLead, bulkDeleteLeads, bulkUpdateStatus, getEmailTemplates, sendEmailToLead, getEmailPreview, sendCustomEmailToLead, getLeadActivityLogs, improveEmailWithAI, researchLead } from './actions'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
@@ -53,6 +53,7 @@ export default function LeadsPage() {
     const [isSubmitting, setIsSubmitting] = useState(false)
     const [scanningIds, setScanningIds] = useState<Set<string>>(new Set())
     const [enrichingIds, setEnrichingIds] = useState<Set<string>>(new Set())
+    const [researchingIds, setResearchingIds] = useState<Set<string>>(new Set())
 
     // Bulk Import State
     const [isBulkImportOpen, setIsBulkImportOpen] = useState(false)
@@ -1235,6 +1236,40 @@ export default function LeadsPage() {
                                                                 </Button>
                                                             </TooltipTrigger>
                                                             <TooltipContent>Ver Historial</TooltipContent>
+                                                        </Tooltip>
+                                                        {/* Investigar (AI Research) Button */}
+                                                        <Tooltip>
+                                                            <TooltipTrigger asChild>
+                                                                <Button
+                                                                    variant="ghost"
+                                                                    size="sm"
+                                                                    className={lead.ai_research_done ? "text-green-600" : "text-orange-600 hover:text-orange-700"}
+                                                                    disabled={researchingIds.has(lead.id)}
+                                                                    onClick={async () => {
+                                                                        setResearchingIds(prev => new Set(prev).add(lead.id))
+                                                                        const result = await researchLead(lead.id)
+                                                                        if (result.success) {
+                                                                            fetchLeads()
+                                                                        } else {
+                                                                            alert('Error: ' + result.error)
+                                                                        }
+                                                                        setResearchingIds(prev => {
+                                                                            const next = new Set(prev)
+                                                                            next.delete(lead.id)
+                                                                            return next
+                                                                        })
+                                                                    }}
+                                                                >
+                                                                    {researchingIds.has(lead.id) ? (
+                                                                        <Loader2 className="h-3 w-3 animate-spin" />
+                                                                    ) : (
+                                                                        <Search className="h-3 w-3" />
+                                                                    )}
+                                                                </Button>
+                                                            </TooltipTrigger>
+                                                            <TooltipContent>
+                                                                {lead.ai_research_done ? 'Ya investigado ✓' : 'Investigar (Perplexity)'}
+                                                            </TooltipContent>
                                                         </Tooltip>
                                                         {!lead.quick_scan_done && (
                                                             <Tooltip>

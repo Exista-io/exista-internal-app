@@ -140,6 +140,23 @@ export interface Lead {
   tags?: string[];
   notes?: string;
   assigned_to?: string;
+  // AI Research fields (Perplexity)
+  company_description?: string;
+  company_industry?: string;
+  company_stage?: string;
+  employee_count?: string;
+  recent_news?: string;
+  tech_stack?: string[];
+  pain_points?: string[];
+  competitors?: string[];
+  ai_research_done: boolean;
+  ai_research_at?: string;
+  ai_research_source?: string;
+  // Deep Scan fields
+  deep_scan_done: boolean;
+  deep_scan_at?: string;
+  deep_scan_results?: Record<string, unknown>;
+  evs_score_estimate?: number;
   created_at: string;
   updated_at: string;
 }

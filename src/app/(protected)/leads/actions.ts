@@ -4,6 +4,15 @@ import { createClient } from '@/lib/supabase/server'
 import { quickScanDomain, bulkQuickScan, QuickScanResult } from '@/lib/leads/quick-scan'
 import { hunterDomainSearch, getHunterAccountInfo } from '@/lib/leads/hunter'
 import { revalidatePath } from 'next/cache'
+import OpenAI from 'openai'
+
+// Initialize Perplexity Client (uses OpenAI-compatible API)
+const perplexityClient = process.env.PERPLEXITY_API_KEY
+    ? new OpenAI({
+        apiKey: process.env.PERPLEXITY_API_KEY,
+        baseURL: 'https://api.perplexity.ai'
+    })
+    : null
 
 /**
  * Create a new lead
@@ -891,6 +900,125 @@ ASUNTO: [nuevo asunto aquí]
         return {
             success: false,
             error: error instanceof Error ? error.message : 'AI error'
+        }
+    }
+}
+
+/**
+ * Research a lead using Perplexity AI
+ * Returns company context for personalized outreach
+ */
+export async function researchLead(leadId: string): Promise<{
+    success: boolean;
+    data?: {
+        company_description: string;
+        company_industry: string;
+        company_stage: string;
+        employee_count: string;
+        recent_news: string;
+        tech_stack: string[];
+        pain_points: string[];
+        competitors: string[];
+    };
+    error?: string;
+}> {
+    if (!perplexityClient) {
+        return { success: false, error: 'PERPLEXITY_API_KEY not configured' }
+    }
+
+    const supabase = await createClient()
+
+    // Get lead
+    const { data: lead, error: leadError } = await supabase
+        .from('leads')
+        .select('id, domain, company_name')
+        .eq('id', leadId)
+        .single()
+
+    if (leadError || !lead) {
+        return { success: false, error: 'Lead not found' }
+    }
+
+    const companyIdentifier = lead.company_name || lead.domain
+
+    try {
+        const prompt = `Investigate the company "${companyIdentifier}" (website: ${lead.domain}) and respond ONLY with valid JSON, no markdown, no explanation:
+
+{
+  "company_description": "What the company does in 1-2 sentences in Spanish",
+  "company_industry": "Specific industry in Spanish (e.g., 'Software de contabilidad', 'E-commerce de moda')",
+  "company_stage": "startup OR growth OR enterprise (pick one)",
+  "employee_count": "Estimated range (e.g., '10-50', '50-200', '200+')",
+  "recent_news": "One recent relevant news or achievement, or 'Sin noticias recientes' if none found",
+  "tech_stack": ["list", "of", "technologies", "they", "use"],
+  "pain_points": ["potential", "pain", "points", "based", "on", "their", "business"],
+  "competitors": ["main", "competitors"]
+}
+
+Be concise. Focus on information useful for B2B sales outreach. Respond ONLY with the JSON object.`
+
+        const response = await perplexityClient.chat.completions.create({
+            model: 'llama-3.1-sonar-small-128k-online',
+            messages: [
+                {
+                    role: 'system',
+                    content: 'You are a business research assistant. Respond only with valid JSON, no markdown formatting.'
+                },
+                {
+                    role: 'user',
+                    content: prompt
+                }
+            ],
+            max_tokens: 1000,
+        })
+
+        const content = response.choices[0]?.message?.content || ''
+
+        // Parse JSON response
+        let researchData
+        try {
+            // Remove potential markdown code blocks
+            const cleanContent = content.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim()
+            researchData = JSON.parse(cleanContent)
+        } catch {
+            console.error('Failed to parse Perplexity response:', content)
+            return { success: false, error: 'Failed to parse AI response' }
+        }
+
+        // Update lead with research data
+        const { error: updateError } = await supabase
+            .from('leads')
+            .update({
+                company_description: researchData.company_description,
+                company_industry: researchData.company_industry,
+                company_stage: researchData.company_stage,
+                employee_count: researchData.employee_count,
+                recent_news: researchData.recent_news,
+                tech_stack: researchData.tech_stack,
+                pain_points: researchData.pain_points,
+                competitors: researchData.competitors,
+                ai_research_done: true,
+                ai_research_at: new Date().toISOString(),
+                ai_research_source: 'perplexity',
+            })
+            .eq('id', leadId)
+
+        if (updateError) {
+            console.error('Failed to update lead:', updateError)
+            return { success: false, error: 'Failed to save research data' }
+        }
+
+        revalidatePath('/leads')
+
+        return {
+            success: true,
+            data: researchData
+        }
+    } catch (error) {
+        console.error('Perplexity research error:', error)
+        return {
+            success: false,
+            error: error instanceof Error ? error.message : 'Research failed'
         }
     }
 }
