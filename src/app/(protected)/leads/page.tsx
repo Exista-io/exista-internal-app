@@ -1267,8 +1267,19 @@ export default function LeadsPage() {
                                                                     )}
                                                                 </Button>
                                                             </TooltipTrigger>
-                                                            <TooltipContent>
-                                                                {lead.ai_research_done ? 'Ya investigado ✓' : 'Investigar (Perplexity)'}
+                                                            <TooltipContent className={lead.ai_research_done ? "max-w-sm" : ""}>
+                                                                {lead.ai_research_done ? (
+                                                                    <div className="space-y-1 text-xs">
+                                                                        <div className="font-bold text-green-500">✓ Investigado</div>
+                                                                        {lead.company_description && <div><span className="text-muted-foreground">📝</span> {lead.company_description}</div>}
+                                                                        {lead.company_industry && <div><span className="text-muted-foreground">🏢</span> {lead.company_industry}</div>}
+                                                                        {lead.company_stage && <div><span className="text-muted-foreground">📊</span> {lead.company_stage}</div>}
+                                                                        {lead.employee_count && <div><span className="text-muted-foreground">👥</span> {lead.employee_count} empleados</div>}
+                                                                        {lead.pain_points && lead.pain_points.length > 0 && (
+                                                                            <div><span className="text-muted-foreground">⚠️</span> {lead.pain_points.slice(0, 2).join(', ')}</div>
+                                                                        )}
+                                                                    </div>
+                                                                ) : 'Investigar (Perplexity)'}
                                                             </TooltipContent>
                                                         </Tooltip>
                                                         {!lead.quick_scan_done && (
