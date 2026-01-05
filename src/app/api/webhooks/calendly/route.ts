@@ -64,12 +64,10 @@ export async function POST(request: NextRequest) {
                 lead_id: leadId,
                 invitee_email: invitee.email.toLowerCase(),
                 invitee_name: invitee.name,
-                invitee_first_name: invitee.first_name || null,
-                invitee_last_name: invitee.last_name || null,
                 invitee_timezone: invitee.timezone,
-                event_uri: invitee.event,
+                calendly_event_uri: invitee.event,
                 scheduled_at: invitee.scheduled_event?.start_time || null,
-                event_type_name: invitee.scheduled_event?.name || null,
+                meeting_type: invitee.scheduled_event?.name || null,
                 status: 'scheduled',
                 cancel_url: invitee.cancel_url,
                 reschedule_url: invitee.reschedule_url,
@@ -112,7 +110,7 @@ export async function POST(request: NextRequest) {
                     status: 'cancelled',
                     updated_at: new Date().toISOString(),
                 })
-                .eq('event_uri', invitee.event)
+                .eq('calendly_event_uri', invitee.event)
                 .eq('invitee_email', invitee.email.toLowerCase())
 
             // Update lead status if found
