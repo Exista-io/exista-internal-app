@@ -1,36 +1,108 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Exista Internal App
 
-## Getting Started
+Sistema interno de gestión de clientes, leads y outreach para Exista - Agencia de AEO/GEO (Answer Engine Optimization / Generative Engine Optimization).
 
-First, run the development server:
+## 🚀 Tech Stack
+
+- **Framework:** Next.js 14 (App Router)
+- **Database:** Supabase (PostgreSQL)
+- **Auth:** Supabase Auth
+- **Email:** Resend
+- **AI:** Google Gemini 3.0 Flash, Perplexity Sonar
+- **Styling:** Tailwind CSS + shadcn/ui
+- **Deploy:** Vercel
+
+## 📋 Features
+
+### Clientes
+- Dashboard con métricas EVS (Engine Visibility Score)
+- Gestión de auditorías
+- Seguimiento de acciones
+- Historial de servicios
+
+### Leads
+- Quick Scan de dominios (detección de issues AEO)
+- Deep Scan con IA (análisis completo)
+- Enriquecimiento con Hunter.io
+- Investigación con Perplexity (empresa + persona)
+- Generación de emails personalizados con IA
+- Generación de mensajes LinkedIn con IA
+- Export CSV para herramientas de automatización
+- **Sistema de Cadencias** (secuencias multi-canal)
+
+### Integraciones
+- **Resend:** Envío de emails + webhooks de tracking
+- **Calendly:** Webhooks para detectar meetings agendadas
+- **Hunter.io:** Búsqueda de emails empresariales
+
+## 🛠 Setup
+
+### 1. Clonar e instalar
+
+```bash
+git clone https://github.com/Exista-io/exista-internal-app.git
+cd exista-internal-app
+npm install
+```
+
+### 2. Variables de entorno
+
+Copiar `.env.example` a `.env.local` y completar:
+
+```env
+# Supabase
+NEXT_PUBLIC_SUPABASE_URL=https://xxx.supabase.co
+NEXT_PUBLIC_SUPABASE_ANON_KEY=xxx
+SUPABASE_SERVICE_ROLE_KEY=xxx
+
+# APIs
+RESEND_API_KEY=re_xxx
+HUNTER_API_KEY=xxx
+PERPLEXITY_API_KEY=pplx-xxx
+GOOGLE_GENERATIVE_AI_API_KEY=xxx
+```
+
+### 3. Migraciones
+
+Correr en Supabase SQL Editor (en orden):
+1. `migrations/migration_phase10_leads.sql`
+2. `migrations/migration_phase8_ai_research.sql`
+3. `migrations/migration_phase9b_person_research.sql`
+4. `migrations/migration_phase10_cadences.sql`
+
+### 4. Ejecutar
 
 ```bash
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Abrir [http://localhost:3000](http://localhost:3000)
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+## 📁 Estructura
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+```
+src/
+├── app/
+│   ├── (protected)/        # Rutas autenticadas
+│   │   ├── page.tsx        # Dashboard
+│   │   ├── clients/        # Gestión de clientes
+│   │   ├── leads/          # Gestión de leads
+│   │   └── cadences/       # Gestión de cadencias
+│   ├── api/webhooks/       # Webhooks (Resend, Calendly)
+│   └── login/              # Auth
+├── components/             # Componentes reutilizables
+├── lib/                    # Utilidades y SDKs
+│   ├── supabase/           # Cliente Supabase
+│   └── leads/              # Quick scan, Hunter
+└── types/                  # TypeScript types
+```
 
-## Learn More
+## 📖 Documentación adicional
 
-To learn more about Next.js, take a look at the following resources:
+- **[ARCHITECTURE.md](./ARCHITECTURE.md)** - Contexto técnico detallado para desarrollo
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+## 🔗 URLs
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
-
-## Deploy on Vercel
-
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+- **Producción:** https://exista-internal-app.vercel.app
+- **Supabase:** Dashboard de Supabase
+- **Vercel:** Dashboard de Vercel
